@@ -1,19 +1,14 @@
 // ═══════════════════════════════════════════════════════════════
 // TwitchDancefloor - Overlay Main Loop
+// TRANSPARENT background for OBS layering
 // ═══════════════════════════════════════════════════════════════
 (function () {
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
   const W = 1920, H = 1080;
-  let bgImage = null;
   let effects = [];
   let startTime = performance.now();
   let connected = false;
-
-  // Load background image
-  const img = new Image();
-  img.onload = () => { bgImage = img; };
-  img.src = '/assets/background.png';
 
   // Connect WebSocket
   OverlaySocket.connect();
@@ -53,28 +48,14 @@
     const t = (performance.now() - startTime) / 1000;
     const audio = AudioAnalyzer.getData();
 
-    // Clear
+    // Clear canvas fully transparent - no background, no vignette
+    // This allows the OBS video/content behind the overlay to show through
     ctx.clearRect(0, 0, W, H);
 
-    // Background
-    if (bgImage) {
-      ctx.drawImage(bgImage, 0, 0, W, H);
-    } else {
-      ctx.fillStyle = '#0a0a12';
-      ctx.fillRect(0, 0, W, H);
-    }
-
-    // Subtle vignette always
-    const vigGrad = ctx.createRadialGradient(W / 2, H / 2, W * 0.3, W / 2, H / 2, W * 0.7);
-    vigGrad.addColorStop(0, 'rgba(0,0,0,0)');
-    vigGrad.addColorStop(1, 'rgba(0,0,0,0.4)');
-    ctx.fillStyle = vigGrad;
-    ctx.fillRect(0, 0, W, H);
-
-    // Render effects
+    // Render all effects on transparent canvas
     EffectsRenderer.render(ctx, effects, audio, t);
 
-    // Render dancers
+    // Render dancers (sides only, never center)
     const dancerEffect = effects.find(e => e.id === 'dancers');
     if (dancerEffect) {
       DancersRenderer.render(ctx, dancerEffect, audio, t);
