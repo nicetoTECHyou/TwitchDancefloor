@@ -13,7 +13,7 @@
   <header class="header">
     <div class="header-left">
       <h1 class="neon-title">TwitchDancefloor</h1>
-      <span class="version">v0.0.4</span>
+      <span class="version">v0.0.5</span>
     </div>
     <div class="header-right">
       <div class="connection-status" id="ws-status">
@@ -90,16 +90,28 @@
 
             <!-- Tip Box -->
             <div class="tip-box">
-              <div class="tip-title">&#x1F4A1; Tipp: Desktop-Sound ohne Mikrofon</div>
+              <div class="tip-title">&#x1F4A1; So bekommst du Desktop-Sound (nicht nur Mikrofon!)</div>
               <div class="tip-text">
-                F&uuml;r besten Beat-Detection vom Desktop-Sound:
+                <strong>Methode 1: Stereo Mix aktivieren (kostenlos, kein Extra-Software)</strong>
                 <ol class="tip-list">
-                  <li><strong>VB-Audio Virtual Cable</strong> installieren (kostenlos)</li>
-                  <li>Windows Sound-Einstellungen: Virtual Cable als Aufnahmeger&auml;t aktivieren</li>
-                  <li>Im Dropdown oben das Virtual Cable w&auml;hlen</li>
-                  <li>Oder: Windows &quot;Stereo Mix&quot; in den Sound-Einstellungen aktivieren</li>
+                  <li>Rechtsklick auf das Lautsprecher-Symbol in der Taskleiste &rarr; &quot;Sounds&quot;</li>
+                  <li>Tab &quot;Aufnahme&quot; &rarr; Rechtsklick &rarr; &quot;Deaktivierte Ger&auml;te anzeigen&quot;</li>
+                  <li>&quot;Stereo Mix&quot; oder &quot;Stereomix&quot; &rarr; Rechtsklick &rarr; &quot;Aktivieren&quot;</li>
+                  <li>Stero Mix als Standard-Aufnahmeger&auml;t setzen</li>
+                  <li>Dann oben im Dropdown &quot;Stereo Mix&quot; w&auml;hlen!</li>
                 </ol>
-                Alternative: Den <strong>Desktop Audio</strong> Button nutzen (Bildschirmfreigabe mit Audio).
+                <strong>Methode 2: VB-Audio Virtual Cable (kostenlos)</strong>
+                <ol class="tip-list">
+                  <li>Von <strong>vb-audio.com</strong> herunterladen und installieren</li>
+                  <li>Windows Sound: Wiedergabe = deine Lautsprecher, Aufnahme = CABLE Input</li>
+                  <li>Im Dropdown oben &quot;CABLE Input&quot; w&auml;hlen</li>
+                </ol>
+                <strong>Methode 3: Desktop Audio Button</strong>
+                <ol class="tip-list">
+                  <li>Button klicken &rarr; Bildschirmfreigabe-Dialog &ouml;ffnet sich</li>
+                  <li><strong>WICHTIG:</strong> H&auml;kchen bei &quot;Audio teilen&quot; / &quot;Share system audio&quot; setzen!</li>
+                  <li>Beliebigen Bildschirm w&auml;hlen &rarr; Teilen</li>
+                </ol>
               </div>
             </div>
           </div>
@@ -142,8 +154,8 @@
             </div>
             <div class="sensitivity-row">
               <span class="sens-label">Empfindlichkeit:</span>
-              <input type="range" id="admin-sensitivity" min="0.5" max="5" step="0.1" value="2.0">
-              <span class="sens-value" id="sens-value">2.0</span>
+              <input type="range" id="admin-sensitivity" min="0.5" max="5" step="0.1" value="1.2">
+              <span class="sens-value" id="sens-value">1.2</span>
             </div>
           </div>
         </div>

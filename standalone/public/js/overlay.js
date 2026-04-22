@@ -47,7 +47,7 @@
 
     // Apply local beatPulse decay between server updates (60fps render vs 25fps audio)
     if (!currentAudio.beat) {
-      currentAudio.beatPulse *= 0.94;
+      currentAudio.beatPulse *= 0.88;  // Faster decay = snappier beats, less lingering
     }
 
     // Clear canvas - fully transparent for OBS

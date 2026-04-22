@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor v0.0.4 - Standalone Server
+// TwitchDancefloor v0.0.5 - Standalone Server
 // OBS Music Reactive Light Show Overlay
 // Audio data flows: Admin -> Server -> Overlay
 // ═══════════════════════════════════════════════════════════════
@@ -211,7 +211,7 @@ io.on('connection', (socket) => {
 // ═══════════════════════ START ═══════════════════════
 httpServer.listen(PORT, () => {
   console.log('');
-  console.log('  TwitchDancefloor v0.0.4 - Music Reactive Light Show Overlay');
+  console.log('  TwitchDancefloor v0.0.5 - Music Reactive Light Show Overlay');
   console.log('');
   console.log('  Overlay:  http://localhost:' + PORT + '/overlay.html');
   console.log('  Admin:    http://localhost:' + PORT + '/admin.html');

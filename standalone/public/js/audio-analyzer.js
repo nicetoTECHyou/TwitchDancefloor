@@ -11,7 +11,7 @@ const AudioAnalyzer = (() => {
   let currentStream = null;
   let dataArray = null;
   let timeDomainArray = null;
-  let sensitivity = 2.0;
+  let sensitivity = 1.2;  // Lower default - was 2.0 which was too extreme
   let currentSourceName = 'Keine';
 
   // Beat detection with BPM tracking
@@ -231,17 +231,17 @@ const AudioAnalyzer = (() => {
       else if (i < highEnd) highSum += val;
     }
 
-    // Weight bass more heavily for beat detection
-    const rawBass = (bassSum / Math.max(bassEnd, 1)) * sensitivity * 1.3;
-    const rawMid = (midSum / Math.max(midEnd - bassEnd, 1)) * sensitivity;
-    const rawHigh = (highSum / Math.max(highEnd - midEnd, 1)) * sensitivity;
-    const rawVol = (totalSum / len) * sensitivity;
+    // Weight bass for beat detection - moderate weighting
+    const rawBass = (bassSum / Math.max(bassEnd, 1)) * sensitivity * 1.1;
+    const rawMid = (midSum / Math.max(midEnd - bassEnd, 1)) * sensitivity * 0.8;
+    const rawHigh = (highSum / Math.max(highEnd - midEnd, 1)) * sensitivity * 0.7;
+    const rawVol = (totalSum / len) * sensitivity * 0.8;
 
-    // Smooth with faster response for bass (for beat detection)
-    smoothBass = smoothBass * 0.55 + rawBass * 0.45;
-    smoothMid = smoothMid * 0.65 + rawMid * 0.35;
-    smoothHigh = smoothHigh * 0.65 + rawHigh * 0.35;
-    smoothVol = smoothVol * 0.65 + rawVol * 0.35;
+    // Smoother response - less jittery
+    smoothBass = smoothBass * 0.65 + rawBass * 0.35;
+    smoothMid = smoothMid * 0.72 + rawMid * 0.28;
+    smoothHigh = smoothHigh * 0.72 + rawHigh * 0.28;
+    smoothVol = smoothVol * 0.72 + rawVol * 0.28;
 
     // ── 64-band Equalizer ──
     for (let i = 0; i < EQ_BANDS; i++) {
@@ -266,11 +266,13 @@ const AudioAnalyzer = (() => {
     bassAvg /= Math.max(historyLen, 1);
 
     const now = performance.now();
-    const minBeatInterval = Math.max(150, (60000 / estimatedBPM) * 0.5);
+    // Longer min interval = less trigger-happy, better for house/techno
+    const minBeatInterval = Math.max(250, (60000 / estimatedBPM) * 0.6);
 
     const isRising = smoothBass > prevBass;
-    const isPeak = smoothBass > bassAvg * 1.3 && smoothBass > 0.2;
-    const isAbovePrev = smoothBass >= prevPrevBass * 0.9;
+    // Higher threshold (1.5x avg instead of 1.3x) = fewer false beats
+    const isPeak = smoothBass > bassAvg * 1.5 && smoothBass > 0.25;
+    const isAbovePrev = smoothBass >= prevPrevBass * 0.85;
 
     const isBeat = (
       isPeak &&
@@ -303,7 +305,7 @@ const AudioAnalyzer = (() => {
       }
     }
 
-    beatDecay *= 0.88;
+    beatDecay *= 0.80;  // Faster decay = less lingering, snappier beats
     prevPrevBass = prevBass;
     prevBass = smoothBass;
 

@@ -31,8 +31,9 @@ const EffectsRenderer = (() => {
     const speed = effect.speed;
     const color = effect.color;
     const bp = audio.beatPulse || 0;
-    const count = Math.floor(6 + audio.bass * 8 * intensity);
-    const sweepSpeed = 0.4 * speed + audio.mid * 2;
+    // CAP laser count - was 6 + bass*8 which could go to 14 lasers = too much!
+    const count = Math.min(Math.floor(4 + audio.bass * 3 * intensity), 8);
+    const sweepSpeed = 0.4 * speed + audio.mid * 1.2;
 
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
@@ -55,18 +56,18 @@ const EffectsRenderer = (() => {
       // Wide glow
       ctx.beginPath();
       ctx.moveTo(ox, oy); ctx.lineTo(ex, ey);
-      ctx.strokeStyle = rgba(color, (0.2 + bp * 0.15) * intensity);
-      ctx.lineWidth = 16 + audio.bass * 12 + bp * 8;
+      ctx.strokeStyle = rgba(color, (0.15 + bp * 0.1) * intensity);
+      ctx.lineWidth = 12 + audio.bass * 6 + bp * 5;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 40 + audio.volume * 50 + bp * 25;
+      ctx.shadowBlur = 30 + audio.volume * 30 + bp * 15;
       ctx.stroke();
 
       // Medium glow
       ctx.beginPath();
       ctx.moveTo(ox, oy); ctx.lineTo(ex, ey);
-      ctx.strokeStyle = rgba(color, (0.5 + bp * 0.2) * intensity);
-      ctx.lineWidth = 4 + audio.bass * 3;
-      ctx.shadowBlur = 20;
+      ctx.strokeStyle = rgba(color, (0.35 + bp * 0.15) * intensity);
+      ctx.lineWidth = 3 + audio.bass * 2;
+      ctx.shadowBlur = 15;
       ctx.stroke();
 
       // Core beam
@@ -164,11 +165,11 @@ const EffectsRenderer = (() => {
     const color = effect.color;
     const bp = audio.beatPulse || 0;
 
-    // Beat-synced strobe
-    if (bp > 0.2) {
+    // Beat-synced strobe - only on strong beats
+    if (bp > 0.4) {
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = rgba(color, bp * 0.6 * intensity);
+      ctx.fillStyle = rgba(color, bp * 0.4 * intensity);
       ctx.fillRect(0, 0, W, H);
       ctx.restore();
     }
@@ -493,7 +494,8 @@ const EffectsRenderer = (() => {
     const color = effect.color;
 
     // Trigger on beat or with bass
-    if (audio.beat || (audio.bass > 0.4 && Math.random() < 0.06)) {
+    // Only trigger on actual beats, not random bass spikes
+    if (audio.beat) {
       const startX = W * (0.1 + Math.random() * 0.8);
       const bolt = { points: [{ x: startX, y: 0 }], alpha: 1.0, life: 8 };
       let bx = startX, by = 0;
