@@ -2,12 +2,14 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=1920, height=1080">
+<meta name="viewport" content="1920, height=1080">
 <title>TwitchDancefloor - OBS Overlay</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body { width: 1920px; height: 1080px; overflow: hidden; background: transparent; }
-canvas { display: block; width: 1920px; height: 1080px; }
+/* Canvas renders at HALF resolution (960x540) for performance */
+/* CSS scales it to 1920x1080 - glow effects look identical at half-res */
+canvas { display: block; width: 1920px; height: 1080px; image-rendering: auto; }
 #status-dot {
   position: fixed; top: 10px; right: 10px; width: 8px; height: 8px;
   border-radius: 50%; background: #ff0044; z-index: 100;
@@ -17,7 +19,8 @@ canvas { display: block; width: 1920px; height: 1080px; }
 </style>
 </head>
 <body>
-<canvas id="overlay" width="1920" height="1080"></canvas>
+<!-- Internal resolution: 960x540 (half), displayed at 1920x1080 via CSS -->
+<canvas id="overlay" width="960" height="540"></canvas>
 <div id="status-dot"></div>
 <script src="/socket.io/socket.io.js"></script>
 <script src="/js/socket-client.js"></script>

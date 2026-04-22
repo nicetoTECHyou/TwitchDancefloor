@@ -1,7 +1,8 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Admin Panel Logic v4
-// LOCAL audio capture + device enumeration + level meters
-// Audio is captured HERE in admin, sent to overlay via server
+// TwitchDancefloor - Admin Panel Logic v7
+// FIXED: getData() is now a pure read (no side effects)
+// AudioAnalyzer runs its own analysis loop at 30fps internally
+// Admin just reads cached data for broadcast + local meters
 // ═══════════════════════════════════════════════════════════════
 (function () {
   let effects = [];
@@ -86,12 +87,10 @@
       opt.textContent = dev.name;
       deviceSelect.appendChild(opt);
     }
-    // Restore selection if still available
     if (currentVal) {
       const found = devices.find(d => d.id === currentVal);
       if (found) deviceSelect.value = currentVal;
     }
-    console.log('[Admin] Device list refreshed:', devices.length, 'devices');
   }
 
   btnRefresh.addEventListener('click', refreshDeviceList);
@@ -99,10 +98,7 @@
   // ── Connect to selected device ──
   btnConnectDevice.addEventListener('click', async () => {
     const deviceId = deviceSelect.value;
-    if (!deviceId) {
-      alert('Bitte w\u00e4hle ein Audio-Ger\u00e4t aus dem Dropdown.');
-      return;
-    }
+    if (!deviceId) { alert('Bitte w\u00e4hle ein Audio-Ger\u00e4t aus dem Dropdown.'); return; }
     const deviceName = deviceSelect.options[deviceSelect.selectedIndex]?.textContent || 'Audio-Ger\u00e4t';
     const success = await AudioAnalyzer.connectDevice(deviceId, deviceName);
     if (success) {
@@ -113,10 +109,9 @@
     }
   });
 
-  // Also connect on double-click / Enter in dropdown
   deviceSelect.addEventListener('dblclick', () => btnConnectDevice.click());
 
-  // ── Desktop Audio (Screen Share) ──
+  // ── Desktop Audio ──
   btnDesktop.addEventListener('click', async () => {
     const success = await AudioAnalyzer.connectDesktop();
     if (success) {
@@ -129,7 +124,6 @@
 
   // ── Audio File ──
   btnFile.addEventListener('click', () => fileInput.click());
-
   fileInput.addEventListener('change', (e) => {
     if (e.target.files[0]) {
       const success = AudioAnalyzer.connectFile(e.target.files[0]);
@@ -163,15 +157,17 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // AUDIO BROADCAST - Send audio data to server for overlay
+  // AUDIO BROADCAST - Send cached data to overlay via server
+  // AudioAnalyzer.getData() is now a PURE READ (no side effects!)
+  // Analysis runs internally at 30fps - we just read the cache
   // ═══════════════════════════════════════════════════════════
 
   function startAudioBroadcast() {
     if (audioSendInterval) clearInterval(audioSendInterval);
-    // Send audio data at 25fps to server
+    // Read cached data at 25fps and send to overlay
     audioSendInterval = setInterval(() => {
       if (!AudioAnalyzer.isConnected()) return;
-      const data = AudioAnalyzer.getData();
+      const data = AudioAnalyzer.getData(); // Pure read - no side effects!
       OverlaySocket.emit('audio-data', data);
     }, 40);
   }
@@ -181,7 +177,6 @@
       clearInterval(audioSendInterval);
       audioSendInterval = null;
     }
-    // Send zero data to overlay
     OverlaySocket.emit('audio-data', {
       bass: 0, mid: 0, high: 0, volume: 0,
       beat: false, beatPulse: 0, bpm: 120,
@@ -191,7 +186,8 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // LOCAL LEVEL METERS + WAVEFORM (updated at render rate)
+  // LOCAL LEVEL METERS + WAVEFORM
+  // getData() is now a pure read - safe to call at 60fps!
   // ═══════════════════════════════════════════════════════════
 
   const wfCtx = waveformCanvas ? waveformCanvas.getContext('2d') : null;
@@ -203,6 +199,7 @@
       return;
     }
 
+    // Safe to call frequently - getData() is a pure read now!
     const data = AudioAnalyzer.getData();
 
     // ── Update level bars ──
@@ -237,72 +234,43 @@
     if (bpmEl) bpmEl.textContent = bpmText;
     if (headerBpm) headerBpm.textContent = bpmText;
 
-    // ── Waveform visualization ──
+    // ── Waveform ──
     if (wfCtx) {
       wfCtx.clearRect(0, 0, WF_W, WF_H);
-
-      // Draw 64-band EQ as waveform
       const bands = data.eqBands;
       if (bands && bands.length > 0) {
         const barW = WF_W / bands.length;
-
-        // Background grid
         wfCtx.strokeStyle = '#1a1a2e';
         wfCtx.lineWidth = 0.5;
         for (let y = 0; y < WF_H; y += 20) {
-          wfCtx.beginPath();
-          wfCtx.moveTo(0, y);
-          wfCtx.lineTo(WF_W, y);
-          wfCtx.stroke();
+          wfCtx.beginPath(); wfCtx.moveTo(0, y); wfCtx.lineTo(WF_W, y); wfCtx.stroke();
         }
-
-        // EQ bars
         for (let i = 0; i < bands.length; i++) {
           const val = bands[i] || 0;
           const h = Math.max(2, val * WF_H * 0.9);
           const x = i * barW;
           const y = WF_H - h;
-
-          // Gradient per bar
           const grad = wfCtx.createLinearGradient(x, WF_H, x, y);
-          if (i < 16) {
-            grad.addColorStop(0, '#ff0066');
-            grad.addColorStop(1, '#ff4488');
-          } else if (i < 40) {
-            grad.addColorStop(0, '#ffaa00');
-            grad.addColorStop(1, '#ffcc44');
-          } else {
-            grad.addColorStop(0, '#00aaff');
-            grad.addColorStop(1, '#44ccff');
-          }
-
+          if (i < 16) { grad.addColorStop(0, '#ff0066'); grad.addColorStop(1, '#ff4488'); }
+          else if (i < 40) { grad.addColorStop(0, '#ffaa00'); grad.addColorStop(1, '#ffcc44'); }
+          else { grad.addColorStop(0, '#00aaff'); grad.addColorStop(1, '#44ccff'); }
           wfCtx.fillStyle = grad;
           wfCtx.fillRect(x + 1, y, barW - 2, h);
         }
-
-        // Beat flash
         if (data.beat) {
           wfCtx.fillStyle = 'rgba(255, 0, 100, 0.15)';
           wfCtx.fillRect(0, 0, WF_W, WF_H);
         }
       } else {
-        // No data - show flat line
-        wfCtx.strokeStyle = '#333';
-        wfCtx.lineWidth = 1;
-        wfCtx.beginPath();
-        wfCtx.moveTo(0, WF_H / 2);
-        wfCtx.lineTo(WF_W, WF_H / 2);
-        wfCtx.stroke();
+        wfCtx.strokeStyle = '#333'; wfCtx.lineWidth = 1;
+        wfCtx.beginPath(); wfCtx.moveTo(0, WF_H / 2); wfCtx.lineTo(WF_W, WF_H / 2); wfCtx.stroke();
       }
     }
 
     requestAnimationFrame(updateLocalMeters);
   }
 
-  // Start local meter animation loop
   requestAnimationFrame(updateLocalMeters);
-
-  // ── Initial device enumeration ──
   refreshDeviceList();
 
   // ═══════════════════════════════════════════════════════════
@@ -356,26 +324,22 @@
       OverlaySocket.emit('toggle-effect', { id, enabled: e.target.checked });
       container.querySelector(`[data-effect-id="${id}"]`).classList.toggle('active', e.target.checked);
     });
-
     const intSlider = container.querySelector(`[data-slider="${id}-intensity"]`);
     if (intSlider) intSlider.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       container.querySelector(`[data-value="${id}-intensity"]`).textContent = val.toFixed(2);
       OverlaySocket.emit('update-effect', { id, intensity: val });
     });
-
     const spdSlider = container.querySelector(`[data-slider="${id}-speed"]`);
     if (spdSlider) spdSlider.addEventListener('input', (e) => {
       const val = parseFloat(e.target.value);
       container.querySelector(`[data-value="${id}-speed"]`).textContent = val.toFixed(1);
       OverlaySocket.emit('update-effect', { id, speed: val });
     });
-
     const colorPicker = container.querySelector(`[data-color="${id}"]`);
     if (colorPicker) colorPicker.addEventListener('input', (e) => {
       OverlaySocket.emit('update-effect', { id, color: e.target.value });
     });
-
     const flashBtn = container.querySelector(`[data-flash="${id}"]`);
     if (flashBtn) flashBtn.addEventListener('click', () => {
       OverlaySocket.emit('trigger-effect', { effectId: id, action: 'on' });
@@ -397,20 +361,20 @@
       } else {
         const sceneEffects = {
           club: [
-            { id: 'laser', enabled: true, intensity: 0.8 }, { id: 'spotlight', enabled: true, intensity: 0.7 },
-            { id: 'mirrorball', enabled: true, intensity: 0.7 }, { id: 'fog', enabled: true, intensity: 0.5 },
-            { id: 'equalizer', enabled: true, intensity: 0.8 }, { id: 'colorwash', enabled: true, intensity: 0.3 },
+            { id: 'laser', enabled: true, intensity: 0.7 }, { id: 'spotlight', enabled: true, intensity: 0.6 },
+            { id: 'mirrorball', enabled: true, intensity: 0.6 }, { id: 'fog', enabled: true, intensity: 0.5 },
+            { id: 'equalizer', enabled: true, intensity: 0.7 }, { id: 'colorwash', enabled: true, intensity: 0.3 },
             { id: 'dancers', enabled: true, intensity: 0.6 },
           ],
           rave: [
-            { id: 'strobe', enabled: true, intensity: 0.7 }, { id: 'laser', enabled: true, intensity: 0.9 },
-            { id: 'particles', enabled: true, intensity: 0.7 }, { id: 'colorwash', enabled: true, intensity: 0.6 },
-            { id: 'confetti', enabled: true, intensity: 0.6 }, { id: 'lightning', enabled: true, intensity: 0.7 },
-            { id: 'dancers', enabled: true, intensity: 0.7 },
+            { id: 'strobe', enabled: true, intensity: 0.6 }, { id: 'laser', enabled: true, intensity: 0.8 },
+            { id: 'particles', enabled: true, intensity: 0.6 }, { id: 'colorwash', enabled: true, intensity: 0.5 },
+            { id: 'confetti', enabled: true, intensity: 0.5 }, { id: 'lightning', enabled: true, intensity: 0.6 },
+            { id: 'dancers', enabled: true, intensity: 0.6 },
           ],
           chill: [
             { id: 'colorwash', enabled: true, intensity: 0.3 }, { id: 'fog', enabled: true, intensity: 0.4 },
-            { id: 'lightbeam', enabled: true, intensity: 0.5 }, { id: 'smoke', enabled: true, intensity: 0.4 },
+            { id: 'lightbeam', enabled: true, intensity: 0.4 }, { id: 'smoke', enabled: true, intensity: 0.4 },
             { id: 'mirrorball', enabled: true, intensity: 0.3 },
           ],
         };
@@ -435,27 +399,19 @@
     const command = document.getElementById('cmd-command').value.trim();
     const action = document.getElementById('cmd-action').value;
     const cooldown = parseInt(document.getElementById('cmd-cooldown').value) || 5;
-
     if (!effectId || !command) return;
     if (!command.startsWith('!')) return;
-
     const cmd = {
-      id: 'cmd_' + Date.now(),
-      command: command.toLowerCase(),
-      effectId, action, cooldown,
+      id: 'cmd_' + Date.now(), command: command.toLowerCase(), effectId, action, cooldown,
       description: `${command} \u2192 ${effects.find(e => e.id === effectId)?.name || effectId} (${action})`
     };
-
     OverlaySocket.emit('add-command', cmd);
     document.getElementById('cmd-command').value = '';
   });
 
   function renderCommands() {
     const list = document.getElementById('command-list');
-    if (commands.length === 0) {
-      list.innerHTML = '<p class="empty-msg">Noch keine Commands definiert</p>';
-      return;
-    }
+    if (commands.length === 0) { list.innerHTML = '<p class="empty-msg">Noch keine Commands definiert</p>'; return; }
     list.innerHTML = commands.map(cmd => {
       const eff = effects.find(e => e.id === cmd.effectId);
       return `<div class="command-item" data-cmd-id="${cmd.id}">
@@ -466,7 +422,6 @@
         <button class="btn-remove" data-remove-cmd="${cmd.id}">\u2715</button>
       </div>`;
     }).join('');
-
     list.querySelectorAll('[data-remove-cmd]').forEach(btn => {
       btn.addEventListener('click', () => OverlaySocket.emit('remove-command', btn.dataset.removeCmd));
     });
@@ -491,7 +446,6 @@
     const statusText = document.querySelector('.channel-status span:last-child');
     const btnConnect = document.getElementById('btn-connect-channel');
     const btnDisconnect = document.getElementById('btn-disconnect-channel');
-
     dot.classList.toggle('connected', channelConfig.connected);
     statusText.textContent = channelConfig.connected ? `Verbunden mit #${channelConfig.channelName}` : 'Nicht verbunden';
     btnConnect.disabled = channelConfig.connected;

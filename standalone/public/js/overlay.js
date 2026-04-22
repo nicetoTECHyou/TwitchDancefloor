@@ -1,22 +1,33 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Overlay Main Loop v6
-// TRANSPARENT background, receives audio data from admin via server
-// FRAME RATE LIMITED to 30fps - prevents GPU overload in OBS
+// TwitchDancefloor - Overlay Main Loop v7
+// HALF-RESOLUTION canvas: 960x540 internal, CSS scaled to 1920x1080
+// = 4x fewer pixels to render = massive GPU/CPU savings
+// Frame rate capped at 30fps (OBS doesn't need more)
+// TRANSPARENT background for OBS Browser Source
 // ═══════════════════════════════════════════════════════════════
 (function () {
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
+
+  // ═══ HALF-RESOLUTION RENDERING ═══
+  // Internal canvas is 960x540 but all drawing code uses 1920x1080
+  // coordinates via ctx.scale(0.5, 0.5). CSS scales display to 1920x1080.
+  // This reduces pixel count by 4x = massive performance gain.
+  // Glow/blur effects look IDENTICAL at half-res (they're soft anyway).
   const W = 1920, H = 1080;
+  ctx.scale(0.5, 0.5);
+  ctx.imageSmoothingEnabled = true;
+
   let effects = [];
   let startTime = performance.now();
   let connected = false;
 
-  // Frame rate limiter - 30fps max (saves GPU, OBS doesn't need more)
+  // Frame rate limiter - 30fps max
   const TARGET_FPS = 30;
   const FRAME_INTERVAL = 1000 / TARGET_FPS;
   let lastFrameTime = 0;
 
-  // Default audio data (when no admin is connected)
+  // Default audio data
   let currentAudio = {
     bass: 0, mid: 0, high: 0, volume: 0,
     beat: false, beatPulse: 0, bpm: 120,
@@ -39,7 +50,6 @@
     else effects.push(data);
   });
 
-  // ── Receive audio data from admin (via server) ──
   OverlaySocket.on('audio-data', (data) => {
     currentAudio = data;
     if (!currentAudio.eqBands) currentAudio.eqBands = new Array(64).fill(0);
@@ -49,25 +59,24 @@
   function render(timestamp) {
     requestAnimationFrame(render);
 
-    // Throttle to target FPS
     const elapsed = timestamp - lastFrameTime;
     if (elapsed < FRAME_INTERVAL) return;
     lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
 
     const t = (performance.now() - startTime) / 1000;
 
-    // Apply local beatPulse decay between server updates
+    // Local beatPulse decay between server updates
     if (!currentAudio.beat) {
-      currentAudio.beatPulse *= 0.88;
+      currentAudio.beatPulse *= 0.85;
     }
 
-    // Clear canvas - fully transparent for OBS
+    // Clear - fully transparent for OBS
     ctx.clearRect(0, 0, W, H);
 
     // Render all effects
     EffectsRenderer.render(ctx, effects, currentAudio, t);
 
-    // Render dancers (sides only!)
+    // Render dancers (sides only)
     const dancerEffect = effects.find(e => e.id === 'dancers');
     if (dancerEffect) {
       DancersRenderer.render(ctx, dancerEffect, currentAudio, t);

@@ -1,7 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Procedural Skeletal Dance Animation v6
-// PERFORMANCE OPTIMIZED: NO shadowBlur (was causing freeze!)
-// Manual glow via layered strokes instead - 10x faster
+// TwitchDancefloor - Procedural Skeletal Dance Animation v7
+// PERFORMANCE OPTIMIZED:
+// - 4 dancers instead of 6 (less CPU)
+// - 2 render passes instead of 4 (way less draw calls)
+// - NO shadowBlur anywhere (manual glow via layered strokes)
+// - Pre-computed color strings (no hex parsing per frame)
 // SIDES ONLY - NEVER in the center area!
 // ═══════════════════════════════════════════════════════════════
 
@@ -9,15 +12,13 @@ const DancersRenderer = (() => {
   const W = 1920, H = 1080;
 
   // Positions: LEFT side and RIGHT side only
-  const LEFT_X  = [120, 270, 400];
-  const RIGHT_X = [1520, 1650, 1800];
+  const LEFT_X  = [140, 340];
+  const RIGHT_X = [1580, 1780];
 
   // ── Dance Style Definitions ──
   const STYLES = {
-
     hiphop: {
-      name: 'Hip Hop',
-      speed: 2.0,
+      name: 'Hip Hop', speed: 2.0,
       getPose(t, bass, bp) {
         const groove = Math.sin(t * 1.75);
         return {
@@ -36,10 +37,8 @@ const DancersRenderer = (() => {
         };
       }
     },
-
     techno: {
-      name: 'Techno',
-      speed: 3.0,
+      name: 'Techno', speed: 3.0,
       getPose(t, bass, bp) {
         const pump = Math.sin(t * 3);
         return {
@@ -58,10 +57,8 @@ const DancersRenderer = (() => {
         };
       }
     },
-
     pop: {
-      name: 'Pop',
-      speed: 1.6,
+      name: 'Pop', speed: 1.6,
       getPose(t, bass, bp) {
         const flow = Math.sin(t * 1.25);
         return {
@@ -80,10 +77,8 @@ const DancersRenderer = (() => {
         };
       }
     },
-
     club: {
-      name: 'Club',
-      speed: 2.2,
+      name: 'Club', speed: 2.2,
       getPose(t, bass, bp) {
         const groove = Math.sin(t * 1.5);
         return {
@@ -104,14 +99,12 @@ const DancersRenderer = (() => {
     },
   };
 
-  // ── Dancer Configurations ──
+  // ── 4 Dancers (2 left, 2 right) ──
   const dancers = [
-    { name: 'Hip Hop Dude',  style: 'hiphop', side: 'left',  slot: 0, scale: 2.2, phase: 0,    color: '#00ff88' },
-    { name: 'Techno Girl',   style: 'techno', side: 'left',  slot: 1, scale: 2.0, phase: 1.2,  color: '#ff0088' },
-    { name: 'Pop Star',      style: 'pop',    side: 'left',  slot: 2, scale: 1.9, phase: 2.5,  color: '#ffcc00' },
-    { name: 'Club Dancer',   style: 'club',   side: 'right', slot: 0, scale: 2.1, phase: 0.8,  color: '#00aaff' },
-    { name: 'Hip Hop Girl',  style: 'hiphop', side: 'right', slot: 1, scale: 2.0, phase: 1.8,  color: '#ff4488' },
-    { name: 'Techno Dude',   style: 'techno', side: 'right', slot: 2, scale: 2.2, phase: 3.0,  color: '#aa44ff' },
+    { name: 'Hip Hop',  style: 'hiphop', side: 'left',  slot: 0, scale: 2.2, phase: 0,   color: '#00ff88' },
+    { name: 'Pop',      style: 'pop',    side: 'left',  slot: 1, scale: 1.9, phase: 2.5, color: '#ffcc00' },
+    { name: 'Techno',   style: 'techno', side: 'right', slot: 0, scale: 2.1, phase: 0.8, color: '#00aaff' },
+    { name: 'Club',     style: 'club',   side: 'right', slot: 1, scale: 2.0, phase: 1.8, color: '#ff4488' },
   ];
 
   // ── Skeleton Dimensions ──
@@ -122,15 +115,21 @@ const DancersRenderer = (() => {
     shoulderW: 18, hipW: 14,
   };
 
-  // ── Pre-computed color cache (avoid hex parsing every frame) ──
-  const colorCache = {};
-  function getRgb(hex) {
-    if (colorCache[hex]) return colorCache[hex];
+  // ── Pre-computed color strings (avoid hex→rgba conversion every frame!) ──
+  const colorStrings = {};
+  function precomputeColors(hex) {
+    if (colorStrings[hex]) return colorStrings[hex];
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
-    colorCache[hex] = { r, g, b };
-    return colorCache[hex];
+    const cache = {};
+    // Pre-compute common alpha values
+    for (let a = 0; a <= 10; a++) {
+      const alpha = a / 10;
+      cache[a] = `rgba(${r},${g},${b},${alpha.toFixed(1)})`;
+    }
+    colorStrings[hex] = cache;
+    return cache;
   }
 
   // ── Forward Kinematics ──
@@ -188,25 +187,19 @@ const DancersRenderer = (() => {
     const rFootY = rKneeY + Math.sin(rShinAngle) * BONE.shin * s;
 
     return {
-      hip: { x: hipX, y: hipY },
-      neck: { x: neckX, y: neckY },
+      hip: { x: hipX, y: hipY }, neck: { x: neckX, y: neckY },
       head: { x: headX, y: headY },
       lShoulder: { x: lShoulderX, y: lShoulderY },
       rShoulder: { x: rShoulderX, y: rShoulderY },
-      lElbow: { x: lElbowX, y: lElbowY },
-      lHand: { x: lHandX, y: lHandY },
-      rElbow: { x: rElbowX, y: rElbowY },
-      rHand: { x: rHandX, y: rHandY },
-      lHip: { x: lHipX, y: lHipY },
-      rHip: { x: rHipX, y: rHipY },
-      lKnee: { x: lKneeX, y: lKneeY },
-      lFoot: { x: lFootX, y: lFootY },
-      rKnee: { x: rKneeX, y: rKneeY },
-      rFoot: { x: rFootX, y: rFootY },
+      lElbow: { x: lElbowX, y: lElbowY }, lHand: { x: lHandX, y: lHandY },
+      rElbow: { x: rElbowX, y: rElbowY }, rHand: { x: rHandX, y: rHandY },
+      lHip: { x: lHipX, y: lHipY }, rHip: { x: rHipX, y: rHipY },
+      lKnee: { x: lKneeX, y: lKneeY }, lFoot: { x: lFootX, y: lFootY },
+      rKnee: { x: rKneeX, y: rKneeY }, rFoot: { x: rFootX, y: rFootY },
     };
   }
 
-  // ── FAST limb drawing (single path, no shadowBlur) ──
+  // ── FAST limb drawing ──
   function drawLimb(ctx, j1, j2, j3) {
     ctx.beginPath();
     ctx.moveTo(j1.x, j1.y);
@@ -215,11 +208,9 @@ const DancersRenderer = (() => {
     ctx.stroke();
   }
 
-  // ── Draw a single dancer - PERFORMANCE OPTIMIZED ──
-  // NO shadowBlur anywhere! Uses layered strokes for glow effect instead.
-  // This is ~10x faster than the shadowBlur approach.
+  // ── Draw dancer - ONLY 2 PASSES for max performance ──
   function drawDancer(ctx, j, color, intensity, bp, scale) {
-    const rgb = getRgb(color);
+    const colors = precomputeColors(color);
     const alpha = (0.55 + intensity * 0.35) * (0.75 + bp * 0.25);
     const s = scale;
 
@@ -228,70 +219,40 @@ const DancersRenderer = (() => {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // ── PASS 1: Soft glow layer (thick, low alpha = manual glow) ──
-    // This replaces shadowBlur with a much cheaper technique
-    const glowAlpha = alpha * 0.2;
-    ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${glowAlpha})`;
-    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${glowAlpha})`;
+    // ── PASS 1: Glow (thick, semi-transparent) ──
+    const glowAlpha = Math.round(alpha * 0.25 * 10) / 10;
+    ctx.strokeStyle = colors[Math.min(Math.round(glowAlpha * 10), 10)] || colors[2];
+    ctx.fillStyle = ctx.strokeStyle;
 
-    // Torso glow
-    ctx.lineWidth = 28 * s;
-    ctx.beginPath();
-    ctx.moveTo(j.hip.x, j.hip.y);
-    ctx.lineTo(j.neck.x, j.neck.y);
-    ctx.stroke();
-
-    // Head glow
-    ctx.beginPath();
-    ctx.arc(j.head.x, j.head.y, BONE.headR * s + 8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Limb glow
     ctx.lineWidth = 22 * s;
-    drawLimb(ctx, j.lShoulder, j.lElbow, j.lHand);
-    drawLimb(ctx, j.rShoulder, j.rElbow, j.rHand);
-    drawLimb(ctx, j.lHip, j.lKnee, j.lFoot);
-    drawLimb(ctx, j.rHip, j.rKnee, j.rFoot);
-
-    // ── PASS 2: Medium glow layer ──
-    const midAlpha = alpha * 0.35;
-    ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${midAlpha})`;
-    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${midAlpha})`;
-
-    // Torso
-    ctx.lineWidth = 14 * s;
     ctx.beginPath();
     ctx.moveTo(j.hip.x, j.hip.y);
     ctx.lineTo(j.neck.x, j.neck.y);
     ctx.stroke();
 
-    // Head
     ctx.beginPath();
-    ctx.arc(j.head.x, j.head.y, BONE.headR * s + 3, 0, Math.PI * 2);
+    ctx.arc(j.head.x, j.head.y, BONE.headR * s + 6, 0, Math.PI * 2);
     ctx.fill();
 
-    // Limbs
-    ctx.lineWidth = 12 * s;
+    ctx.lineWidth = 16 * s;
     drawLimb(ctx, j.lShoulder, j.lElbow, j.lHand);
     drawLimb(ctx, j.rShoulder, j.rElbow, j.rHand);
     drawLimb(ctx, j.lHip, j.lKnee, j.lFoot);
     drawLimb(ctx, j.rHip, j.rKnee, j.rFoot);
 
-    // ── PASS 3: Solid body ──
-    const bodyAlpha = alpha * 0.85;
-    ctx.strokeStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${bodyAlpha})`;
-    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${bodyAlpha})`;
+    // ── PASS 2: Solid body ──
+    const bodyAlpha = Math.round(alpha * 10) / 10;
+    ctx.strokeStyle = colors[Math.min(Math.round(bodyAlpha * 10), 10)] || colors[7];
+    ctx.fillStyle = ctx.strokeStyle;
 
-    // Torso shape (filled trapezoid)
+    // Torso shape
     ctx.beginPath();
     ctx.moveTo(j.lShoulder.x, j.lShoulder.y);
     ctx.lineTo(j.rShoulder.x, j.rShoulder.y);
     ctx.lineTo(j.rHip.x, j.rHip.y);
     ctx.lineTo(j.lHip.x, j.lHip.y);
     ctx.closePath();
-    ctx.globalAlpha = bodyAlpha * 0.7;
     ctx.fill();
-    ctx.globalAlpha = 1;
 
     // Head
     ctx.beginPath();
@@ -306,12 +267,12 @@ const DancersRenderer = (() => {
     ctx.stroke();
 
     // Arms
-    ctx.lineWidth = 9 * s;
+    ctx.lineWidth = 8 * s;
     drawLimb(ctx, j.lShoulder, j.lElbow, j.lHand);
     drawLimb(ctx, j.rShoulder, j.rElbow, j.rHand);
 
     // Legs
-    ctx.lineWidth = 10 * s;
+    ctx.lineWidth = 9 * s;
     drawLimb(ctx, j.lHip, j.lKnee, j.lFoot);
     drawLimb(ctx, j.rHip, j.rKnee, j.rFoot);
 
@@ -321,29 +282,17 @@ const DancersRenderer = (() => {
     ctx.arc(j.rHand.x, j.rHand.y, BONE.handR * s, 0, Math.PI * 2);
     ctx.fill();
 
-    // ── PASS 4: Bright white core highlights (thin, no shadow) ──
-    const coreAlpha = alpha * 0.5;
-    ctx.strokeStyle = `rgba(255,255,255,${coreAlpha})`;
+    // White core lines (thin, looks sharp)
+    ctx.strokeStyle = `rgba(255,255,255,${(alpha * 0.4).toFixed(1)})`;
     ctx.lineWidth = 2 * s;
-
     drawLimb(ctx, j.lShoulder, j.lElbow, j.lHand);
     drawLimb(ctx, j.rShoulder, j.rElbow, j.rHand);
-    drawLimb(ctx, j.lHip, j.lKnee, j.lFoot);
-    drawLimb(ctx, j.rHip, j.rKnee, j.rFoot);
-
-    // Spine
     ctx.beginPath();
     ctx.moveTo(j.hip.x, j.hip.y);
     ctx.lineTo(j.neck.x, j.neck.y);
     ctx.stroke();
 
-    // Head highlight
-    ctx.fillStyle = `rgba(255,255,255,${coreAlpha * 0.4})`;
-    ctx.beginPath();
-    ctx.arc(j.head.x, j.head.y, BONE.headR * s * 0.45, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── Beat flash at feet ──
+    // Beat flash at feet
     if (bp > 0.3) {
       ctx.globalAlpha = bp * 0.4 * intensity;
       ctx.fillStyle = color;
