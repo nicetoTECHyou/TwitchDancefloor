@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>TwitchDancefloor - OBS Overlay</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+canvas { display: block; width: 1920px; height: 1080px; }
+#audio-controls {
+  position: fixed; bottom: 10px; right: 10px; z-index: 100;
+  opacity: 0; transition: opacity 0.3s;
+  background: rgba(0,0,0,0.7); border-radius: 8px; padding: 8px;
+}
+#audio-controls:hover { opacity: 1; }
+#audio-controls button {
+  background: #00ff88; color: #000; border: none; border-radius: 4px;
+  padding: 4px 10px; font-size: 11px; cursor: pointer; margin: 2px;
+}
+#audio-controls button:hover { background: #00cc66; }
+#audio-controls select {
+  background: #1a1a2e; color: #fff; border: 1px solid #333;
+  border-radius: 4px; padding: 2px 6px; font-size: 11px;
+}
+#status-dot {
+  position: fixed; top: 10px; right: 10px; width: 8px; height: 8px;
+  border-radius: 50%; background: #ff0044; z-index: 100;
+  transition: background 0.3s;
+}
+#status-dot.connected { background: #00ff88; }
+</style>
+</head>
+<body>
+<canvas id="overlay" width="1920" height="1080"></canvas>
+<div id="status-dot"></div>
+<div id="audio-controls">
+  <select id="audio-source">
+    <option value="none">Audio: Aus</option>
+    <option value="mic">Mikrofon</option>
+    <option value="desktop">Desktop Audio</option>
+    <option value="file">Audio Datei</option>
+  </select>
+  <button id="btn-connect-audio">Verbinden</button>
+  <input type="file" id="audio-file-input" accept="audio/*" style="display:none">
+</div>
+<script src="/js/socket-client.js"></script>
+<script src="/js/audio-analyzer.js"></script>
+<script src="/js/effects.js"></script>
+<script src="/js/dancers.js"></script>
+<script src="/js/overlay.js"></script>
+</body>
+</html>

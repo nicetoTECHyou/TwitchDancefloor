@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TwitchDancefloor - Admin Panel</title>
+<link rel="stylesheet" href="/css/style.css">
+<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+<div id="app">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <h1 class="neon-title">TwitchDancefloor</h1>
+      <span class="version">v0.0.1</span>
+    </div>
+    <div class="header-right">
+      <div class="connection-status" id="ws-status">
+        <span class="status-dot"></span>
+        <span class="status-text">Verbinde...</span>
+      </div>
+      <div class="audio-meter">
+        <div class="meter-bar" id="meter-bass"><span class="meter-label">B</span></div>
+        <div class="meter-bar" id="meter-mid"><span class="meter-label">M</span></div>
+        <div class="meter-bar" id="meter-high"><span class="meter-label">H</span></div>
+        <div class="meter-bar" id="meter-vol"><span class="meter-label">V</span></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="main-content">
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar">
+      <button class="nav-btn active" data-panel="effects">💡 Effekte</button>
+      <button class="nav-btn" data-panel="scenes">🎬 Szenen</button>
+      <button class="nav-btn" data-panel="commands">💬 Commands</button>
+      <button class="nav-btn" data-panel="channel">📡 Kanal</button>
+      <button class="nav-btn" data-panel="chatlog">📜 Chat</button>
+      <div class="sidebar-spacer"></div>
+      <a href="/overlay.html" target="_blank" class="nav-btn link-btn">🖥 Overlay öffnen</a>
+    </nav>
+
+    <!-- Panels -->
+    <div class="panels">
+      <!-- Effects Panel -->
+      <div class="panel active" id="panel-effects">
+        <h2>Effekt-Steuerung</h2>
+        <div class="effect-categories">
+          <div class="category">
+            <h3>💡 Licht</h3>
+            <div class="effect-grid" id="grid-light"></div>
+          </div>
+          <div class="category">
+            <h3>🌫️ Atmosphäre</h3>
+            <div class="effect-grid" id="grid-atmosphere"></div>
+          </div>
+          <div class="category">
+            <h3>🎨 Visuell</h3>
+            <div class="effect-grid" id="grid-visual"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scenes Panel -->
+      <div class="panel" id="panel-scenes">
+        <h2>Schnell-Szenen</h2>
+        <div class="scene-grid">
+          <button class="scene-btn club" data-scene="club">
+            <span class="scene-icon">🎵</span>
+            <span class="scene-name">Club Mode</span>
+            <span class="scene-desc">Laser + Spotlights + Spiegelkugel + Nebel + EQ</span>
+          </button>
+          <button class="scene-btn rave" data-scene="rave">
+            <span class="scene-icon">⚡</span>
+            <span class="scene-name">Rave Mode</span>
+            <span class="scene-desc">Strobe + Laser + Partikel + Farbflut + Konfetti</span>
+          </button>
+          <button class="scene-btn chill" data-scene="chill">
+            <span class="scene-icon">🌊</span>
+            <span class="scene-name">Chill Mode</span>
+            <span class="scene-desc">Farbflut + Nebel + Lichtkegel + Rauch</span>
+          </button>
+          <button class="scene-btn party" data-scene="party">
+            <span class="scene-icon">🎉</span>
+            <span class="scene-name">Party Mode</span>
+            <span class="scene-desc">Alles aktiv - moderate Intensität</span>
+          </button>
+          <button class="scene-btn blackout" data-scene="blackout">
+            <span class="scene-icon">⬛</span>
+            <span class="scene-name">Blackout</span>
+            <span class="scene-desc">Alle Effekte aus</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Commands Panel -->
+      <div class="panel" id="panel-commands">
+        <h2>Chat Command Center</h2>
+        <div class="command-form">
+          <select id="cmd-effect">
+            <option value="">Effekt wählen...</option>
+          </select>
+          <input type="text" id="cmd-command" placeholder="!befehl" maxlength="30">
+          <select id="cmd-action">
+            <option value="toggle">Toggle</option>
+            <option value="on">An</option>
+            <option value="off">Aus</option>
+          </select>
+          <input type="number" id="cmd-cooldown" value="5" min="1" max="120" placeholder="Cooldown (s)">
+          <button id="btn-add-command" class="btn-add">+ Hinzufügen</button>
+        </div>
+        <div class="command-list" id="command-list">
+          <p class="empty-msg">Noch keine Commands definiert</p>
+        </div>
+      </div>
+
+      <!-- Channel Panel -->
+      <div class="panel" id="panel-channel">
+        <h2>Kanal-Einstellungen</h2>
+        <div class="channel-card">
+          <div class="channel-platform">
+            <span class="platform-icon">🟣</span>
+            <span>Twitch</span>
+          </div>
+          <div class="channel-input-row">
+            <input type="text" id="channel-name" placeholder="Kanalname (ohne #)" autocomplete="off">
+            <button id="btn-connect-channel" class="btn-connect">Verbinden</button>
+            <button id="btn-disconnect-channel" class="btn-disconnect" disabled>Trennen</button>
+          </div>
+          <div class="channel-status" id="channel-status">
+            <span class="status-dot ch-dot"></span>
+            <span>Nicht verbunden</span>
+          </div>
+          <p class="channel-hint">Kein Token nötig! Der Server verbindet sich anonym zum Twitch-Chat und hört auf deine Commands.</p>
+        </div>
+      </div>
+
+      <!-- Chat Log Panel -->
+      <div class="panel" id="panel-chatlog">
+        <h2>Chat-Verlauf</h2>
+        <div class="chat-log" id="chat-log">
+          <p class="empty-msg">Verbinde einen Kanal um Chat-Nachrichten zu sehen</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/js/socket-client.js"></script>
+<script src="/js/admin.js"></script>
+</body>
+</html>
