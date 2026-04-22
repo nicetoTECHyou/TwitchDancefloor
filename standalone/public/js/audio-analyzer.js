@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Audio Analyzer (Improved)
-// Reliable beat detection + frequency analysis
+// TwitchDancefloor - Audio Analyzer v3
+// BPM-aware beat detection + reliable frequency analysis
 // ═══════════════════════════════════════════════════════════════
 
 const AudioAnalyzer = (() => {
@@ -9,16 +9,21 @@ const AudioAnalyzer = (() => {
   let source = null;
   let dataArray = null;
   let timeDomainArray = null;
-  let sensitivity = 1.8;
+  let sensitivity = 2.0;
 
-  // Beat detection state
-  let bassHistory = new Float32Array(60); // ~1 second of bass values
+  // Beat detection with BPM tracking
+  let bassHistory = new Float32Array(80); // ~1.3 seconds of bass
   let bassHistoryIdx = 0;
   let bassHistoryFilled = false;
   let lastBeatTime = 0;
-  let beatCooldown = 180; // ms between beats
-  let prevBass = 0;
   let beatDecay = 0;
+  let prevBass = 0;
+  let prevPrevBass = 0;
+
+  // BPM estimation
+  let beatTimes = []; // timestamps of recent beats
+  let estimatedBPM = 120;
+  let beatInterval = 500; // ms between beats at estimated BPM
 
   // Smoothed values
   let smoothBass = 0, smoothMid = 0, smoothHigh = 0, smoothVol = 0;
@@ -27,8 +32,8 @@ const AudioAnalyzer = (() => {
     if (audioCtx) return;
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.75;
+    analyser.fftSize = 4096; // Higher resolution for better frequency analysis
+    analyser.smoothingTimeConstant = 0.7;
     dataArray = new Uint8Array(analyser.frequencyBinCount);
     timeDomainArray = new Uint8Array(analyser.frequencyBinCount);
   }
@@ -44,7 +49,9 @@ const AudioAnalyzer = (() => {
     try {
       init();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
       disconnectSource();
       source = audioCtx.createMediaStreamSource(stream);
       source.connect(analyser);
@@ -57,16 +64,19 @@ const AudioAnalyzer = (() => {
     try {
       init();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: 1, height: 1 }, audio: true });
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: 1, height: 1, frameRate: 1 },
+        audio: true
+      });
       const audioTracks = stream.getAudioTracks();
       if (audioTracks.length === 0) {
-        console.warn('[Audio] No audio track in desktop capture - user may have unchecked "Share audio"');
+        console.warn('[Audio] No audio in desktop capture - did you check "Share audio"?');
         return false;
       }
       disconnectSource();
       source = audioCtx.createMediaStreamSource(stream);
       source.connect(analyser);
-      console.log('[Audio] Desktop audio connected');
+      console.log('[Audio] Desktop audio connected:', audioTracks[0].label);
       return true;
     } catch (e) { console.error('[Audio] Desktop error:', e.message); return false; }
   }
@@ -93,19 +103,19 @@ const AudioAnalyzer = (() => {
 
   function getData() {
     if (!analyser || !dataArray) {
-      return { bass: 0, mid: 0, high: 0, volume: 0, beat: false, frequencies: new Uint8Array(0) };
+      return { bass: 0, mid: 0, high: 0, volume: 0, beat: false, beatPulse: 0, bpm: 120, frequencies: new Uint8Array(0) };
     }
 
     analyser.getByteFrequencyData(dataArray);
-    analyser.getByteTimeDomainData(timeDomainArray);
 
     const len = dataArray.length;
     const sampleRate = audioCtx.sampleRate;
     const binHz = sampleRate / analyser.fftSize;
 
     // ── Frequency bands ──
-    const bassEnd = Math.min(Math.floor(250 / binHz), len);
-    const midEnd = Math.min(Math.floor(4000 / binHz), len);
+    const bassEnd = Math.min(Math.floor(200 / binHz), len);    // Focus on sub-bass + bass
+    const midEnd = Math.min(Math.floor(3000 / binHz), len);
+    const highEnd = Math.min(Math.floor(12000 / binHz), len);
 
     let bassSum = 0, midSum = 0, highSum = 0, totalSum = 0;
     for (let i = 0; i < len; i++) {
@@ -113,22 +123,23 @@ const AudioAnalyzer = (() => {
       totalSum += val;
       if (i < bassEnd) bassSum += val;
       else if (i < midEnd) midSum += val;
-      else highSum += val;
+      else if (i < highEnd) highSum += val;
     }
 
-    const rawBass = (bassSum / Math.max(bassEnd, 1)) * sensitivity;
+    // Weight bass more heavily for beat detection
+    const rawBass = (bassSum / Math.max(bassEnd, 1)) * sensitivity * 1.3;
     const rawMid = (midSum / Math.max(midEnd - bassEnd, 1)) * sensitivity;
-    const rawHigh = (highSum / Math.max(len - midEnd, 1)) * sensitivity;
+    const rawHigh = (highSum / Math.max(highEnd - midEnd, 1)) * sensitivity;
     const rawVol = (totalSum / len) * sensitivity;
 
-    // Smooth
-    smoothBass = smoothBass * 0.7 + rawBass * 0.3;
-    smoothMid = smoothMid * 0.7 + rawMid * 0.3;
-    smoothHigh = smoothHigh * 0.7 + rawHigh * 0.3;
-    smoothVol = smoothVol * 0.7 + rawVol * 0.3;
+    // Smooth with faster response for bass (for beat detection)
+    smoothBass = smoothBass * 0.55 + rawBass * 0.45;
+    smoothMid = smoothMid * 0.65 + rawMid * 0.35;
+    smoothHigh = smoothHigh * 0.65 + rawHigh * 0.35;
+    smoothVol = smoothVol * 0.65 + rawVol * 0.35;
 
-    // ── Beat detection ──
-    // Track running average of bass
+    // ── Beat Detection with BPM awareness ──
+    // Track running average
     bassHistory[bassHistoryIdx] = smoothBass;
     bassHistoryIdx = (bassHistoryIdx + 1) % bassHistory.length;
     if (bassHistoryIdx === 0) bassHistoryFilled = true;
@@ -138,21 +149,52 @@ const AudioAnalyzer = (() => {
     for (let i = 0; i < historyLen; i++) bassAvg += bassHistory[i];
     bassAvg /= Math.max(historyLen, 1);
 
-    // Beat = current bass significantly above average + rising + cooldown elapsed
+    // Beat detection: bass peak above threshold + rising
     const now = performance.now();
+    
+    // Use BPM to set minimum beat interval (don't detect beats faster than the music)
+    const minBeatInterval = Math.max(150, (60000 / estimatedBPM) * 0.5);
+    
+    const isRising = smoothBass > prevBass;
+    const isPeak = smoothBass > bassAvg * 1.3 && smoothBass > 0.2;
+    const isAbovePrev = smoothBass >= prevPrevBass * 0.9;
+    
     const isBeat = (
-      smoothBass > bassAvg * 1.35 &&
-      smoothBass > 0.25 &&
-      smoothBass > prevBass * 0.95 && // bass is rising or sustained
-      now - lastBeatTime > beatCooldown
+      isPeak &&
+      (isRising || isAbovePrev) &&
+      now - lastBeatTime > minBeatInterval
     );
 
     if (isBeat) {
       lastBeatTime = now;
       beatDecay = 1.0;
+      
+      // Track beat times for BPM estimation
+      beatTimes.push(now);
+      if (beatTimes.length > 16) beatTimes.shift();
+      
+      // Estimate BPM from recent beats
+      if (beatTimes.length >= 4) {
+        const recentBeats = beatTimes.slice(-8);
+        let intervals = [];
+        for (let i = 1; i < recentBeats.length; i++) {
+          const interval = recentBeats[i] - recentBeats[i-1];
+          if (interval > 200 && interval < 2000) intervals.push(interval);
+        }
+        if (intervals.length >= 2) {
+          const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+          const newBPM = Math.round(60000 / avgInterval);
+          // Sanity check BPM range
+          if (newBPM >= 60 && newBPM <= 200) {
+            estimatedBPM = estimatedBPM * 0.7 + newBPM * 0.3; // Smooth BPM changes
+            beatInterval = 60000 / estimatedBPM;
+          }
+        }
+      }
     }
 
-    beatDecay *= 0.92;
+    beatDecay *= 0.88; // Faster decay for punchy feel
+    prevPrevBass = prevBass;
     prevBass = smoothBass;
 
     return {
@@ -161,14 +203,13 @@ const AudioAnalyzer = (() => {
       high: Math.min(smoothHigh, 1),
       volume: Math.min(smoothVol, 1),
       beat: isBeat,
-      beatPulse: beatDecay, // decaying pulse for visual effects
+      beatPulse: beatDecay,
+      bpm: Math.round(estimatedBPM),
       frequencies: dataArray,
     };
   }
 
-  function isConnected() {
-    return analyser !== null;
-  }
+  function isConnected() { return analyser !== null; }
 
   return {
     connectMic, connectDesktop, connectFile, getData,

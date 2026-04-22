@@ -1,11 +1,13 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Admin Panel Logic
+// TwitchDancefloor - Admin Panel Logic v2
+// With audio source selector + level meters
 // ═══════════════════════════════════════════════════════════════
 (function () {
   let effects = [];
   let commands = [];
   let channelConfig = { channelName: '', connected: false };
   let chatMessages = [];
+  let audioConnected = false;
 
   // ── Connect ──
   OverlaySocket.connect();
@@ -30,7 +32,7 @@
     updateChannelUI();
   });
 
-  OverlaySocket.on('audio-data', (data) => { updateAudioMeters(data); });
+  OverlaySocket.on('audio-data', (data) => { updateLevelMeters(data); });
 
   OverlaySocket.on('chat-message', (msg) => {
     chatMessages.push(msg);
@@ -54,14 +56,98 @@
     });
   });
 
-  // ── Render Effects ──
+  // ═══════════════════ AUDIO SOURCE ═══════════════════
+  const btnMic = document.getElementById('btn-audio-mic');
+  const btnDesktop = document.getElementById('btn-audio-desktop');
+  const btnFile = document.getElementById('btn-audio-file');
+  const fileInput = document.getElementById('audio-file-input');
+  const audioDot = document.getElementById('audio-dot');
+  const audioStatusText = document.getElementById('audio-status-text');
+  const sensSlider = document.getElementById('admin-sensitivity');
+  const sensValue = document.getElementById('sens-value');
+
+  // These buttons tell the overlay (via WebSocket) to connect audio
+  // The overlay page actually does the audio connection since it has the canvas
+  btnMic.addEventListener('click', () => {
+    OverlaySocket.emit('audio-command', { source: 'mic' });
+    updateAudioStatus(true, 'Mikrofon');
+  });
+
+  btnDesktop.addEventListener('click', () => {
+    OverlaySocket.emit('audio-command', { source: 'desktop' });
+    updateAudioStatus(true, 'Desktop Audio');
+  });
+
+  btnFile.addEventListener('click', () => {
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', (e) => {
+    // We can't send files via WebSocket easily, so we'll need to handle this in overlay
+    // For now, tell the user to use the overlay's file picker
+    OverlaySocket.emit('audio-command', { source: 'file', fileName: e.target.files[0]?.name || '' });
+    updateAudioStatus(true, 'Datei: ' + (e.target.files[0]?.name || '?'));
+  });
+
+  sensSlider.addEventListener('input', (e) => {
+    const val = parseFloat(e.target.value);
+    sensValue.textContent = val.toFixed(1);
+    OverlaySocket.emit('audio-command', { sensitivity: val });
+  });
+
+  function updateAudioStatus(connected, source) {
+    audioConnected = connected;
+    audioDot.classList.toggle('connected', connected);
+    audioStatusText.textContent = connected ? `Verbunden: ${source}` : 'Keine Audio-Quelle verbunden';
+  }
+
+  // ═══════════════════ LEVEL METERS ═══════════════════
+  function updateLevelMeters(data) {
+    // Level bars
+    const bars = { bass: data.bass, mid: data.mid, high: data.high, vol: data.volume };
+    for (const [key, val] of Object.entries(bars)) {
+      const fill = document.getElementById('level-' + key);
+      const valEl = document.getElementById('val-' + key);
+      if (fill) fill.style.width = Math.round(val * 100) + '%';
+      if (valEl) valEl.textContent = Math.round(val * 100) + '%';
+    }
+
+    // Header meters
+    const meters = { 'meter-bass': data.bass, 'meter-mid': data.mid, 'meter-high': data.high, 'meter-vol': data.volume };
+    for (const [id, val] of Object.entries(meters)) {
+      const bar = document.getElementById(id);
+      if (bar) {
+        const h = Math.max(4, val * 28);
+        bar.style.height = h + 'px';
+        bar.classList.toggle('active', val > 0.3);
+      }
+    }
+
+    // Beat indicator
+    const beatDot = document.getElementById('admin-beat-dot');
+    if (beatDot) beatDot.classList.toggle('active', data.beat);
+
+    // BPM
+    const bpm = data.bpm || 0;
+    const bpmEl = document.getElementById('admin-bpm');
+    const headerBpm = document.getElementById('bpm-display');
+    const bpmText = bpm > 0 ? bpm + ' BPM' : '-- BPM';
+    if (bpmEl) bpmEl.textContent = bpmText;
+    if (headerBpm) headerBpm.textContent = bpmText;
+
+    // Audio connected status from data
+    if (data.volume > 0.01) {
+      audioDot.classList.add('connected');
+    }
+  }
+
+  // ═══════════════════ EFFECTS ═══════════════════
   function renderEffects() {
     const categories = { light: 'grid-light', atmosphere: 'grid-atmosphere', visual: 'grid-visual' };
     for (const [cat, gridId] of Object.entries(categories)) {
       const grid = document.getElementById(gridId);
       const catEffects = effects.filter(e => e.category === cat);
       grid.innerHTML = catEffects.map(e => effectCardHTML(e)).join('');
-      // Bind events
       catEffects.forEach(e => bindEffectEvents(e.id, grid));
     }
   }
@@ -100,8 +186,7 @@
     const toggle = container.querySelector(`[data-toggle="${id}"]`);
     if (toggle) toggle.addEventListener('change', (e) => {
       OverlaySocket.emit('toggle-effect', { id, enabled: e.target.checked });
-      const card = container.querySelector(`[data-effect-id="${id}"]`);
-      card.classList.toggle('active', e.target.checked);
+      container.querySelector(`[data-effect-id="${id}"]`).classList.toggle('active', e.target.checked);
     });
 
     const intSlider = container.querySelector(`[data-slider="${id}-intensity"]`);
@@ -130,49 +215,41 @@
     });
   }
 
-  // ── Scenes ──
-  const scenes = {
-    club: [
-      { id: 'laser', enabled: true, intensity: 0.8 }, { id: 'spotlight', enabled: true, intensity: 0.7 },
-      { id: 'mirrorball', enabled: true, intensity: 0.7 }, { id: 'fog', enabled: true, intensity: 0.5 },
-      { id: 'equalizer', enabled: true, intensity: 0.8 }, { id: 'colorwash', enabled: true, intensity: 0.3 },
-    ],
-    rave: [
-      { id: 'strobe', enabled: true, intensity: 0.9 }, { id: 'laser', enabled: true, intensity: 0.9 },
-      { id: 'particles', enabled: true, intensity: 0.7 }, { id: 'colorwash', enabled: true, intensity: 0.6 },
-      { id: 'confetti', enabled: true, intensity: 0.6 }, { id: 'lightning', enabled: true, intensity: 0.7 },
-    ],
-    chill: [
-      { id: 'colorwash', enabled: true, intensity: 0.3 }, { id: 'fog', enabled: true, intensity: 0.4 },
-      { id: 'lightbeam', enabled: true, intensity: 0.5 }, { id: 'smoke', enabled: true, intensity: 0.4 },
-      { id: 'mirrorball', enabled: true, intensity: 0.3 },
-    ],
-    party: effects.map(e => ({ id: e.id, enabled: true, intensity: 0.5 })),
-    blackout: effects.map(e => ({ id: e.id, enabled: false, intensity: e.intensity })),
-  };
-
+  // ═══════════════════ SCENES ═══════════════════
   document.querySelectorAll('.scene-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const sceneName = btn.dataset.scene;
-      const sceneEffects = scenes[sceneName];
-      if (sceneEffects) {
-        // For blackout/party we need current effects list
-        if (sceneName === 'blackout') {
-          const offEffects = effects.map(e => ({ id: e.id, enabled: false }));
-          OverlaySocket.emit('apply-scene', offEffects);
-        } else if (sceneName === 'party') {
-          const onEffects = effects.map(e => ({ id: e.id, enabled: true, intensity: 0.5 }));
-          OverlaySocket.emit('apply-scene', onEffects);
-        } else {
-          // First disable all, then enable scene effects
-          const allOff = effects.map(e => ({ id: e.id, enabled: false }));
-          OverlaySocket.emit('apply-scene', [...allOff, ...sceneEffects]);
-        }
+      if (sceneName === 'blackout') {
+        OverlaySocket.emit('apply-scene', effects.map(e => ({ id: e.id, enabled: false })));
+      } else if (sceneName === 'party') {
+        OverlaySocket.emit('apply-scene', effects.map(e => ({ id: e.id, enabled: true, intensity: 0.5 })));
+      } else {
+        const sceneEffects = {
+          club: [
+            { id: 'laser', enabled: true, intensity: 0.8 }, { id: 'spotlight', enabled: true, intensity: 0.7 },
+            { id: 'mirrorball', enabled: true, intensity: 0.7 }, { id: 'fog', enabled: true, intensity: 0.5 },
+            { id: 'equalizer', enabled: true, intensity: 0.8 }, { id: 'colorwash', enabled: true, intensity: 0.3 },
+            { id: 'dancers', enabled: true, intensity: 0.6 },
+          ],
+          rave: [
+            { id: 'strobe', enabled: true, intensity: 0.7 }, { id: 'laser', enabled: true, intensity: 0.9 },
+            { id: 'particles', enabled: true, intensity: 0.7 }, { id: 'colorwash', enabled: true, intensity: 0.6 },
+            { id: 'confetti', enabled: true, intensity: 0.6 }, { id: 'lightning', enabled: true, intensity: 0.7 },
+            { id: 'dancers', enabled: true, intensity: 0.7 },
+          ],
+          chill: [
+            { id: 'colorwash', enabled: true, intensity: 0.3 }, { id: 'fog', enabled: true, intensity: 0.4 },
+            { id: 'lightbeam', enabled: true, intensity: 0.5 }, { id: 'smoke', enabled: true, intensity: 0.4 },
+            { id: 'mirrorball', enabled: true, intensity: 0.3 },
+          ],
+        };
+        const allOff = effects.map(e => ({ id: e.id, enabled: false }));
+        OverlaySocket.emit('apply-scene', [...allOff, ...(sceneEffects[sceneName] || [])]);
       }
     });
   });
 
-  // ── Commands ──
+  // ═══════════════════ COMMANDS ═══════════════════
   function populateEffectDropdown() {
     const sel = document.getElementById('cmd-effect');
     sel.innerHTML = '<option value="">Effekt wählen...</option>' +
@@ -217,13 +294,11 @@
     }).join('');
 
     list.querySelectorAll('[data-remove-cmd]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        OverlaySocket.emit('remove-command', btn.dataset.removeCmd);
-      });
+      btn.addEventListener('click', () => OverlaySocket.emit('remove-command', btn.dataset.removeCmd));
     });
   }
 
-  // ── Channel ──
+  // ═══════════════════ CHANNEL ═══════════════════
   document.getElementById('btn-connect-channel').addEventListener('click', () => {
     const name = document.getElementById('channel-name').value.trim();
     if (!name) return;
@@ -246,33 +321,12 @@
     btnDisconnect.disabled = !channelConfig.connected;
   }
 
-  // ── Audio Meters ──
-  function updateAudioMeters(data) {
-    const meters = {
-      'meter-bass': data.bass,
-      'meter-mid': data.mid,
-      'meter-high': data.high,
-      'meter-vol': data.volume,
-    };
-    for (const [id, val] of Object.entries(meters)) {
-      const bar = document.getElementById(id);
-      const h = Math.max(4, val * 28);
-      bar.style.height = h + 'px';
-      bar.classList.toggle('active', val > 0.3);
-    }
-  }
-
-  // ── Chat Log ──
+  // ═══════════════════ CHAT LOG ═══════════════════
   function renderChatLog() {
     const log = document.getElementById('chat-log');
     log.innerHTML = chatMessages.map(msg => {
-      if (msg.isSystem) {
-        return `<div class="chat-msg system">${msg.content}</div>`;
-      }
-      return `<div class="chat-msg">
-        <span class="username">${msg.username}:</span>
-        <span class="content">${msg.content}</span>
-      </div>`;
+      if (msg.isSystem) return `<div class="chat-msg system">${msg.content}</div>`;
+      return `<div class="chat-msg"><span class="username">${msg.username}:</span> <span class="content">${msg.content}</span></div>`;
     }).join('');
     log.scrollTop = log.scrollHeight;
   }

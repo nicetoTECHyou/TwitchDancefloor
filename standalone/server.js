@@ -181,6 +181,9 @@ io.on('connection', (socket) => {
   // Audio
   socket.on('audio-data', (data) => { audioData = data; socket.broadcast.emit('audio-data', data); });
 
+  // Audio commands from admin to overlay
+  socket.on('audio-command', (data) => { socket.broadcast.emit('audio-command', data); });
+
   // Manual trigger
   socket.on('trigger-effect', (data) => {
     const eff = effects.find(e => e.id === data.effectId);

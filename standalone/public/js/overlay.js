@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Overlay Main Loop
-// TRANSPARENT background for OBS layering
+// TwitchDancefloor - Overlay Main Loop v2
+// TRANSPARENT background, audio command from admin
 // ═══════════════════════════════════════════════════════════════
 (function () {
   const canvas = document.getElementById('overlay');
@@ -25,27 +25,40 @@
     else effects.push(data);
   });
 
-  // ── Audio Controls ──
+  // Audio commands from admin panel
+  OverlaySocket.on('audio-command', (data) => {
+    if (data.source === 'mic') AudioAnalyzer.connectMic();
+    else if (data.source === 'desktop') AudioAnalyzer.connectDesktop();
+    if (data.sensitivity !== undefined) AudioAnalyzer.setSensitivity(data.sensitivity);
+  });
+
+  // ── Audio Controls (on overlay page too, for direct control) ──
   const audioSource = document.getElementById('audio-source');
   const btnConnect = document.getElementById('btn-connect-audio');
   const fileInput = document.getElementById('audio-file-input');
   const beatDot = document.getElementById('beat-dot');
   const sensSlider = document.getElementById('sensitivity');
 
-  btnConnect.addEventListener('click', () => {
-    const src = audioSource.value;
-    if (src === 'mic') AudioAnalyzer.connectMic();
-    else if (src === 'desktop') AudioAnalyzer.connectDesktop();
-    else if (src === 'file') fileInput.click();
-  });
+  if (btnConnect) {
+    btnConnect.addEventListener('click', () => {
+      const src = audioSource ? audioSource.value : 'none';
+      if (src === 'mic') AudioAnalyzer.connectMic();
+      else if (src === 'desktop') AudioAnalyzer.connectDesktop();
+      else if (src === 'file') fileInput.click();
+    });
+  }
 
-  fileInput.addEventListener('change', (e) => {
-    if (e.target.files[0]) AudioAnalyzer.connectFile(e.target.files[0]);
-  });
+  if (fileInput) {
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files[0]) AudioAnalyzer.connectFile(e.target.files[0]);
+    });
+  }
 
-  sensSlider.addEventListener('input', (e) => {
-    AudioAnalyzer.setSensitivity(parseFloat(e.target.value));
-  });
+  if (sensSlider) {
+    sensSlider.addEventListener('input', (e) => {
+      AudioAnalyzer.setSensitivity(parseFloat(e.target.value));
+    });
+  }
 
   // ── Main Render Loop ──
   let lastAudioSend = 0;
@@ -60,7 +73,7 @@
     // Clear canvas - fully transparent for OBS
     ctx.clearRect(0, 0, W, H);
 
-    // Render all effects on transparent canvas
+    // Render all effects
     EffectsRenderer.render(ctx, effects, audio, t);
 
     // Render dancers (sides only!)
@@ -70,11 +83,11 @@
     }
 
     // Send audio data to server for admin meters
-    if (Date.now() - lastAudioSend > 50) {
+    if (Date.now() - lastAudioSend > 40) { // 25fps for admin updates
       lastAudioSend = Date.now();
       OverlaySocket.emit('audio-data', {
         bass: audio.bass, mid: audio.mid, high: audio.high,
-        volume: audio.volume, beat: audio.beat
+        volume: audio.volume, beat: audio.beat, bpm: audio.bpm
       });
     }
 
