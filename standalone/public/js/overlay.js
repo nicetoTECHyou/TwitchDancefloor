@@ -25,10 +25,12 @@
     else effects.push(data);
   });
 
-  // Audio controls
+  // ── Audio Controls ──
   const audioSource = document.getElementById('audio-source');
   const btnConnect = document.getElementById('btn-connect-audio');
   const fileInput = document.getElementById('audio-file-input');
+  const beatDot = document.getElementById('beat-dot');
+  const sensSlider = document.getElementById('sensitivity');
 
   btnConnect.addEventListener('click', () => {
     const src = audioSource.value;
@@ -41,30 +43,39 @@
     if (e.target.files[0]) AudioAnalyzer.connectFile(e.target.files[0]);
   });
 
-  // Main render loop
+  sensSlider.addEventListener('input', (e) => {
+    AudioAnalyzer.setSensitivity(parseFloat(e.target.value));
+  });
+
+  // ── Main Render Loop ──
   let lastAudioSend = 0;
 
   function render() {
     const t = (performance.now() - startTime) / 1000;
     const audio = AudioAnalyzer.getData();
 
-    // Clear canvas fully transparent - no background, no vignette
-    // This allows the OBS video/content behind the overlay to show through
+    // Update beat indicator
+    if (beatDot) beatDot.classList.toggle('active', audio.beat);
+
+    // Clear canvas - fully transparent for OBS
     ctx.clearRect(0, 0, W, H);
 
     // Render all effects on transparent canvas
     EffectsRenderer.render(ctx, effects, audio, t);
 
-    // Render dancers (sides only, never center)
+    // Render dancers (sides only!)
     const dancerEffect = effects.find(e => e.id === 'dancers');
     if (dancerEffect) {
       DancersRenderer.render(ctx, dancerEffect, audio, t);
     }
 
-    // Send audio data to server periodically
+    // Send audio data to server for admin meters
     if (Date.now() - lastAudioSend > 50) {
       lastAudioSend = Date.now();
-      OverlaySocket.emit('audio-data', { bass: audio.bass, mid: audio.mid, high: audio.high, volume: audio.volume });
+      OverlaySocket.emit('audio-data', {
+        bass: audio.bass, mid: audio.mid, high: audio.high,
+        volume: audio.volume, beat: audio.beat
+      });
     }
 
     requestAnimationFrame(render);

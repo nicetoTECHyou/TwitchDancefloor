@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Visual Effects Renderer
-// All the magic happens here ✨
+// TwitchDancefloor - Visual Effects Renderer v2
+// Improved with beat pulse, smoother animations
 // ═══════════════════════════════════════════════════════════════
 
 const EffectsRenderer = (() => {
@@ -30,6 +30,7 @@ const EffectsRenderer = (() => {
     const intensity = effect.intensity;
     const speed = effect.speed;
     const color = effect.color;
+    const bp = audio.beatPulse || 0;
     const count = Math.floor(4 + audio.bass * 6 * intensity);
     const sweepSpeed = 0.3 * speed + audio.mid * 1.5;
 
@@ -54,16 +55,16 @@ const EffectsRenderer = (() => {
       // Glow
       ctx.beginPath();
       ctx.moveTo(ox, oy); ctx.lineTo(ex, ey);
-      ctx.strokeStyle = rgba(color, 0.15 * intensity);
-      ctx.lineWidth = 12 + audio.bass * 8;
+      ctx.strokeStyle = rgba(color, (0.15 + bp * 0.1) * intensity);
+      ctx.lineWidth = 12 + audio.bass * 8 + bp * 6;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 30 + audio.volume * 40;
+      ctx.shadowBlur = 30 + audio.volume * 40 + bp * 20;
       ctx.stroke();
 
       // Core
       ctx.beginPath();
       ctx.moveTo(ox, oy); ctx.lineTo(ex, ey);
-      ctx.strokeStyle = rgba(color, 0.8 * intensity);
+      ctx.strokeStyle = rgba(color, (0.8 + bp * 0.2) * intensity);
       ctx.lineWidth = 1.5 + audio.bass * 1.5;
       ctx.shadowBlur = 15;
       ctx.stroke();
@@ -77,6 +78,7 @@ const EffectsRenderer = (() => {
     const intensity = effect.intensity;
     const speed = effect.speed;
     const color = effect.color;
+    const bp = audio.beatPulse || 0;
     const count = 3;
 
     ctx.save();
@@ -87,8 +89,8 @@ const EffectsRenderer = (() => {
       const centerX = W * (0.25 + i * 0.25) + Math.sin(t * speed * 0.3 + phase) * 200;
       const topX = centerX + Math.sin(t * speed * 0.2 + phase * 1.5) * 100;
       const topY = -20;
-      const spread = (200 + audio.bass * 300 * intensity);
-      const alpha = 0.08 * intensity + audio.mid * 0.12 * intensity;
+      const spread = (200 + audio.bass * 300 * intensity + bp * 80);
+      const alpha = (0.08 + bp * 0.04) * intensity + audio.mid * 0.12 * intensity;
 
       const grad = ctx.createRadialGradient(topX, topY, 10, centerX, H, spread);
       grad.addColorStop(0, rgba(color, alpha));
@@ -125,7 +127,7 @@ const EffectsRenderer = (() => {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 10; i++) {
       const y = H * 0.5 + Math.sin(t * speed * 0.15 + i * 1.2) * H * 0.25;
       const x = ((t * speed * 40 + i * 300) % (W + 600)) - 300;
       const size = 300 + i * 50 + audio.volume * 200 * intensity;
@@ -145,19 +147,24 @@ const EffectsRenderer = (() => {
   }
 
   // ═══════════════════ STROBE ═══════════════════
+  let strobeState = false;
+  let strobeTimer = 0;
   function renderStrobe(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
     const speed = effect.speed;
     const color = effect.color;
+    const bp = audio.beatPulse || 0;
 
-    const freq = speed * 3;
-    const flash = Math.sin(t * freq * Math.PI * 2) > 0.85 - audio.bass * 0.4;
+    // Strobe flashes on beat, also rhythmic auto-flash
+    const autoFlash = Math.sin(t * speed * Math.PI * 2) > 0.9;
+    const beatFlash = bp > 0.3;
+    const flash = autoFlash || beatFlash;
 
     if (flash) {
       ctx.save();
       ctx.globalCompositeOperation = 'screen';
-      ctx.fillStyle = rgba(color, 0.4 * intensity + audio.bass * 0.3);
+      ctx.fillStyle = rgba(color, (0.3 + bp * 0.4) * intensity);
       ctx.fillRect(0, 0, W, H);
       ctx.restore();
     }
@@ -169,6 +176,7 @@ const EffectsRenderer = (() => {
     const intensity = effect.intensity;
     const speed = effect.speed;
     const color = effect.color;
+    const bp = audio.beatPulse || 0;
 
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
@@ -177,9 +185,9 @@ const EffectsRenderer = (() => {
       const phase = i * Math.PI * 2 / 5;
       const topX = W * (0.1 + i * 0.2);
       const sway = Math.sin(t * speed * 0.4 + phase) * 150;
-      const alpha = (0.06 + audio.bass * 0.1) * intensity;
+      const alpha = (0.06 + audio.bass * 0.1 + bp * 0.05) * intensity;
       const topW = 8;
-      const botW = 120 + audio.bass * 160 * intensity;
+      const botW = 120 + audio.bass * 160 * intensity + bp * 40;
 
       ctx.beginPath();
       ctx.moveTo(topX + sway - topW, 0);
@@ -204,9 +212,10 @@ const EffectsRenderer = (() => {
     const intensity = effect.intensity;
     const speed = effect.speed;
     const color = effect.color;
-    const maxParticles = Math.floor(80 * intensity);
+    const bp = audio.beatPulse || 0;
+    const maxParticles = Math.floor(100 * intensity);
 
-    // Spawn
+    // Spawn continuously
     const spawnRate = 2 + audio.volume * 8 * intensity;
     for (let i = 0; i < spawnRate && particlePool.length < maxParticles; i++) {
       particlePool.push({
@@ -215,19 +224,17 @@ const EffectsRenderer = (() => {
         vy: -(1 + Math.random() * 3) * speed,
         size: 1 + Math.random() * 3,
         life: 1, decay: 0.003 + Math.random() * 0.005,
-        hue: Math.random() * 60
       });
     }
 
-    // Burst on beat
+    // Big burst on beat
     if (audio.beat) {
-      for (let i = 0; i < 20; i++) {
-        if (particlePool.length < maxParticles + 40) {
+      for (let i = 0; i < 30; i++) {
+        if (particlePool.length < maxParticles + 60) {
           particlePool.push({
-            x: W * 0.3 + Math.random() * W * 0.4, y: H * 0.5 + Math.random() * H * 0.3,
-            vx: (Math.random() - 0.5) * 8, vy: -Math.random() * 6,
-            size: 2 + Math.random() * 3, life: 1, decay: 0.01 + Math.random() * 0.01,
-            hue: Math.random() * 360
+            x: W * 0.3 + Math.random() * W * 0.4, y: H * 0.4 + Math.random() * H * 0.4,
+            vx: (Math.random() - 0.5) * 10, vy: -Math.random() * 8,
+            size: 2 + Math.random() * 4, life: 1, decay: 0.008 + Math.random() * 0.01,
           });
         }
       }
@@ -240,19 +247,22 @@ const EffectsRenderer = (() => {
       const p = particlePool[i];
       p.x += p.vx; p.y += p.vy;
       p.vy -= 0.02; p.life -= p.decay;
-      if (p.life <= 0) { particlePool.splice(i, 1); continue; }
+      if (p.life <= 0 || p.y < -20) { particlePool.splice(i, 1); continue; }
 
+      const glowSize = p.size * p.life * (1 + bp * 0.5);
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-      ctx.fillStyle = rgba(color, p.life * 0.8 * intensity);
+      ctx.arc(p.x, p.y, glowSize, 0, Math.PI * 2);
+      ctx.fillStyle = rgba(color, p.life * (0.6 + bp * 0.3) * intensity);
       ctx.shadowColor = color;
-      ctx.shadowBlur = 10;
+      ctx.shadowBlur = 10 + bp * 10;
       ctx.fill();
     }
     ctx.restore();
   }
 
   // ═══════════════════ EQUALIZER ═══════════════════
+  // Smoothed bar values for silky equalizer
+  const eqSmooth = new Float32Array(48);
   function renderEqualizer(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
@@ -261,6 +271,7 @@ const EffectsRenderer = (() => {
     const barW = W / barCount * 0.7;
     const gap = W / barCount * 0.3;
     const maxH = 250 * intensity;
+    const bp = audio.beatPulse || 0;
 
     if (!audio.frequencies || audio.frequencies.length === 0) return;
 
@@ -269,20 +280,22 @@ const EffectsRenderer = (() => {
 
     for (let i = 0; i < barCount; i++) {
       const freqIdx = Math.floor((i / barCount) * (audio.frequencies.length * 0.5));
-      const val = (audio.frequencies[freqIdx] || 0) / 255;
-      const barH = val * maxH + 4;
+      const raw = (audio.frequencies[freqIdx] || 0) / 255;
+      // Smooth interpolation
+      eqSmooth[i] = eqSmooth[i] * 0.6 + raw * 0.4;
+      const barH = eqSmooth[i] * maxH + 4 + bp * 15;
       const x = i * (barW + gap) + gap / 2;
       const y = H - barH;
 
       // Bar gradient
       const grad = ctx.createLinearGradient(x, H, x, y);
-      grad.addColorStop(0, rgba(color, 0.8 * intensity));
+      grad.addColorStop(0, rgba(color, 0.9 * intensity));
       grad.addColorStop(0.5, rgba(color, 0.5 * intensity));
-      grad.addColorStop(1, rgba(color, 0.2 * intensity));
+      grad.addColorStop(1, rgba(color, 0.15 * intensity));
 
       ctx.fillStyle = grad;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 8;
+      ctx.shadowBlur = 6 + bp * 8;
       // Rounded top
       const r = Math.min(barW / 2, 3);
       ctx.beginPath();
@@ -293,14 +306,6 @@ const EffectsRenderer = (() => {
       ctx.quadraticCurveTo(x + barW, y, x + barW, y + r);
       ctx.lineTo(x + barW, H);
       ctx.fill();
-
-      // Reflection
-      const refGrad = ctx.createLinearGradient(x, H, x, H + barH * 0.3);
-      refGrad.addColorStop(0, rgba(color, 0.15 * intensity));
-      refGrad.addColorStop(1, rgba(color, 0));
-      ctx.fillStyle = refGrad;
-      ctx.shadowBlur = 0;
-      ctx.fillRect(x, H, barW, barH * 0.3);
     }
     ctx.restore();
   }
@@ -310,14 +315,15 @@ const EffectsRenderer = (() => {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
     const speed = effect.speed;
+    const bp = audio.beatPulse || 0;
     const hue = (t * speed * 30) % 360;
 
     ctx.save();
     ctx.globalCompositeOperation = 'overlay';
     const grad = ctx.createLinearGradient(0, 0, W, H);
-    grad.addColorStop(0, hsl(hue, 80, 50, (0.08 + audio.bass * 0.1) * intensity));
+    grad.addColorStop(0, hsl(hue, 80, 50, (0.08 + bp * 0.06) * intensity));
     grad.addColorStop(0.5, hsl((hue + 120) % 360, 80, 50, (0.06 + audio.mid * 0.08) * intensity));
-    grad.addColorStop(1, hsl((hue + 240) % 360, 80, 50, (0.08 + audio.bass * 0.1) * intensity));
+    grad.addColorStop(1, hsl((hue + 240) % 360, 80, 50, (0.08 + bp * 0.06) * intensity));
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
@@ -329,8 +335,9 @@ const EffectsRenderer = (() => {
     const intensity = effect.intensity;
     const speed = effect.speed;
     const color = effect.color;
+    const bp = audio.beatPulse || 0;
     const cx = W / 2, cy = 80;
-    const dotCount = 30;
+    const dotCount = 35;
     const rotSpeed = t * speed * 0.5;
 
     ctx.save();
@@ -348,22 +355,22 @@ const EffectsRenderer = (() => {
     // Reflections
     for (let i = 0; i < dotCount; i++) {
       const angle = (i / dotCount) * Math.PI * 2 + rotSpeed;
-      const ring = Math.floor(i / 10);
-      const dist = 200 + ring * 200 + audio.bass * 200 * intensity;
+      const ring = Math.floor(i / 12);
+      const dist = 200 + ring * 180 + (audio.bass + bp * 0.3) * 200 * intensity;
       const dx = Math.cos(angle) * dist;
       const dy = Math.abs(Math.sin(angle)) * dist * 0.7 + 100;
       const dotX = cx + dx;
       const dotY = cy + dy;
       if (dotY > H || dotX < -50 || dotX > W + 50) continue;
 
-      const dotSize = 3 + audio.volume * 6 * intensity;
-      const alpha = (0.2 + audio.volume * 0.4) * intensity;
+      const dotSize = 3 + audio.volume * 6 * intensity + bp * 3;
+      const alpha = (0.2 + audio.volume * 0.4 + bp * 0.2) * intensity;
 
       ctx.beginPath();
       ctx.arc(dotX, dotY, dotSize, 0, Math.PI * 2);
       ctx.fillStyle = rgba(color, alpha);
       ctx.shadowColor = color;
-      ctx.shadowBlur = 15;
+      ctx.shadowBlur = 15 + bp * 10;
       ctx.fill();
     }
     ctx.restore();
@@ -377,7 +384,7 @@ const EffectsRenderer = (() => {
     const color = effect.color;
 
     if (audio.beat) {
-      pulseRings.push({ r: 50, maxR: 600 + audio.bass * 400, alpha: 0.8 * intensity, speed: 3 + speed * 4 });
+      pulseRings.push({ r: 50, maxR: 800 + audio.bass * 500, alpha: 0.8 * intensity, speed: 3 + speed * 4 });
     }
 
     ctx.save();
@@ -385,15 +392,15 @@ const EffectsRenderer = (() => {
 
     for (let i = pulseRings.length - 1; i >= 0; i--) {
       const ring = pulseRings[i];
-      ring.r += ring.speed * (1 + audio.mid);
-      ring.alpha *= 0.96;
+      ring.r += ring.speed * (1 + audio.mid * 0.5);
+      ring.alpha *= 0.955;
 
       if (ring.alpha < 0.01 || ring.r > ring.maxR) { pulseRings.splice(i, 1); continue; }
 
       ctx.beginPath();
       ctx.arc(W / 2, H / 2, ring.r, 0, Math.PI * 2);
       ctx.strokeStyle = rgba(color, ring.alpha);
-      ctx.lineWidth = 3 * ring.alpha * intensity;
+      ctx.lineWidth = Math.max(1, 3 * ring.alpha * intensity);
       ctx.shadowColor = color;
       ctx.shadowBlur = 20;
       ctx.stroke();
@@ -406,19 +413,19 @@ const EffectsRenderer = (() => {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
     const speed = effect.speed;
-    const maxConfetti = Math.floor(60 * intensity);
+    const bp = audio.beatPulse || 0;
+    const maxConfetti = Math.floor(80 * intensity);
 
-    // Spawn
-    if (Math.random() < 0.3 + audio.volume * 0.5) {
-      for (let i = 0; i < 2 && confettiPool.length < maxConfetti; i++) {
-        confettiPool.push({
-          x: Math.random() * W, y: -10,
-          vx: (Math.random() - 0.5) * 3, vy: 1 + Math.random() * 2 * speed,
-          rot: Math.random() * Math.PI * 2, rotSpeed: (Math.random() - 0.5) * 0.2,
-          w: 4 + Math.random() * 8, h: 3 + Math.random() * 5,
-          color: hsl(Math.random() * 360, 90, 60, 1), life: 1
-        });
-      }
+    // Spawn more on beat
+    const spawnCount = audio.beat ? 5 : (Math.random() < 0.3 + audio.volume * 0.5 ? 2 : 0);
+    for (let i = 0; i < spawnCount && confettiPool.length < maxConfetti; i++) {
+      confettiPool.push({
+        x: Math.random() * W, y: -10,
+        vx: (Math.random() - 0.5) * 3, vy: 1 + Math.random() * 2 * speed,
+        rot: Math.random() * Math.PI * 2, rotSpeed: (Math.random() - 0.5) * 0.2,
+        w: 4 + Math.random() * 8, h: 3 + Math.random() * 5,
+        color: hsl(Math.random() * 360, 90, 60, 1), life: 1
+      });
     }
 
     ctx.save();
@@ -446,14 +453,25 @@ const EffectsRenderer = (() => {
     const intensity = effect.intensity;
     const color = effect.color;
 
-    if (audio.beat && Math.random() < 0.6) {
-      const startX = W * (0.2 + Math.random() * 0.6);
-      const bolt = { points: [{ x: startX, y: 0 }], alpha: 1.0, life: 4 };
+    // Trigger on beat or randomly with bass
+    if (audio.beat || (audio.bass > 0.5 && Math.random() < 0.02)) {
+      const startX = W * (0.15 + Math.random() * 0.7);
+      const bolt = { points: [{ x: startX, y: 0 }], alpha: 1.0, life: 5 };
       let cx = startX, cy = 0;
       while (cy < H) {
         cx += (Math.random() - 0.5) * 120;
         cy += 30 + Math.random() * 60;
         bolt.points.push({ x: cx, y: Math.min(cy, H) });
+        // Branch sometimes
+        if (Math.random() < 0.25) {
+          const branchLen = 3 + Math.floor(Math.random() * 4);
+          let bx = cx, by = cy;
+          for (let b = 0; b < branchLen; b++) {
+            bx += (Math.random() - 0.5) * 80;
+            by += 20 + Math.random() * 40;
+            bolt.points.push({ x: bx, y: Math.min(by, H), branch: true });
+          }
+        }
       }
       lightningBolts.push(bolt);
     }
@@ -463,23 +481,29 @@ const EffectsRenderer = (() => {
     for (let i = lightningBolts.length - 1; i >= 0; i--) {
       const bolt = lightningBolts[i];
       bolt.life--;
-      bolt.alpha *= 0.7;
+      bolt.alpha *= 0.65;
       if (bolt.life <= 0) { lightningBolts.splice(i, 1); continue; }
 
       // Glow
       ctx.beginPath();
       ctx.moveTo(bolt.points[0].x, bolt.points[0].y);
-      for (let j = 1; j < bolt.points.length; j++) ctx.lineTo(bolt.points[j].x, bolt.points[j].y);
+      for (let j = 1; j < bolt.points.length; j++) {
+        if (bolt.points[j].branch) ctx.moveTo(bolt.points[j].x, bolt.points[j].y);
+        else ctx.lineTo(bolt.points[j].x, bolt.points[j].y);
+      }
       ctx.strokeStyle = rgba(color, bolt.alpha * 0.3 * intensity);
-      ctx.lineWidth = 8;
+      ctx.lineWidth = 10;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 30;
+      ctx.shadowBlur = 40;
       ctx.stroke();
 
       // Core
       ctx.beginPath();
       ctx.moveTo(bolt.points[0].x, bolt.points[0].y);
-      for (let j = 1; j < bolt.points.length; j++) ctx.lineTo(bolt.points[j].x, bolt.points[j].y);
+      for (let j = 1; j < bolt.points.length; j++) {
+        if (bolt.points[j].branch) ctx.moveTo(bolt.points[j].x, bolt.points[j].y);
+        else ctx.lineTo(bolt.points[j].x, bolt.points[j].y);
+      }
       ctx.strokeStyle = rgba('#ffffff', bolt.alpha * 0.9 * intensity);
       ctx.lineWidth = 2;
       ctx.shadowBlur = 15;
@@ -498,7 +522,7 @@ const EffectsRenderer = (() => {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       const phase = i * 1.8;
       const x = ((Math.sin(t * speed * 0.08 + phase) + 1) / 2) * W;
       const y = H - Math.sin(t * speed * 0.12 + phase) * 200 - i * 40;
