@@ -1,10 +1,11 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Visual Effects Renderer v7
-// PERFORMANCE OPTIMIZED for half-res canvas (960x540):
-// - NO shadowBlur anywhere (uses manual glow via layered strokes)
-// - Reduced particle/object counts
-// - Pre-computed color cache
-// - Fewer draw calls per effect
+// TwitchDancefloor - Visual Effects Renderer v8
+// PERFORMANCE OPTIMIZED with PATH BATCHING:
+// - Laser: 18 draw calls → 3 (all lines batched per layer!)
+// - Lightning: 4N → 2 draw calls (all bolts batched)
+// - Pulse rings: 2N → 2 (all rings batched)
+// - NO shadowBlur anywhere (manual glow via layered strokes)
+// - Half-res canvas (960x540) for 4x fewer pixels
 // ═══════════════════════════════════════════════════════════════
 
 const EffectsRenderer = (() => {
@@ -31,7 +32,7 @@ const EffectsRenderer = (() => {
   const confettiPool = [];
   const pulseRings = [];
 
-  // ═══════════════════ LASER ═══════════════════
+  // ═════════════════════ LASER (BATCHED!) ═════════════════════
   function renderLaser(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
@@ -45,6 +46,8 @@ const EffectsRenderer = (() => {
     ctx.globalCompositeOperation = 'screen';
     ctx.lineCap = 'round';
 
+    // Pre-compute all laser line coordinates
+    const lines = [];
     for (let i = 0; i < count; i++) {
       const phase = (i / count) * Math.PI * 2;
       const angle = Math.sin(t * sweepSpeed + phase) * 0.9;
@@ -57,28 +60,30 @@ const EffectsRenderer = (() => {
       else { ox = W * 0.85; oy = 0; dx = Math.cos(angle - 0.5 + Math.PI); dy = Math.sin(angle + 0.8); }
 
       const len = 2500;
-      const ex = ox + dx * len;
-      const ey = oy + dy * len;
-
-      // 3 layers: glow → color core → white hot center
-      ctx.beginPath();
-      ctx.moveTo(ox, oy); ctx.lineTo(ex, ey);
-      ctx.strokeStyle = rgba(color, (0.1 + bp * 0.06) * intensity);
-      ctx.lineWidth = 20 + audio.bass * 8;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(ox, oy); ctx.lineTo(ex, ey);
-      ctx.strokeStyle = rgba(color, (0.4 + bp * 0.15) * intensity);
-      ctx.lineWidth = 4 + audio.bass * 2;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.moveTo(ox, oy); ctx.lineTo(ex, ey);
-      ctx.strokeStyle = rgba('#ffffff', (0.5 + bp * 0.3) * intensity);
-      ctx.lineWidth = 1 + audio.bass * 0.5;
-      ctx.stroke();
+      lines.push({ ox, oy, ex: ox + dx * len, ey: oy + dy * len });
     }
+
+    // LAYER 1: All glow lines in ONE path (was: N separate draw calls)
+    ctx.beginPath();
+    for (const l of lines) { ctx.moveTo(l.ox, l.oy); ctx.lineTo(l.ex, l.ey); }
+    ctx.strokeStyle = rgba(color, (0.1 + bp * 0.06) * intensity);
+    ctx.lineWidth = 20 + audio.bass * 8;
+    ctx.stroke();
+
+    // LAYER 2: All core lines in ONE path
+    ctx.beginPath();
+    for (const l of lines) { ctx.moveTo(l.ox, l.oy); ctx.lineTo(l.ex, l.ey); }
+    ctx.strokeStyle = rgba(color, (0.4 + bp * 0.15) * intensity);
+    ctx.lineWidth = 4 + audio.bass * 2;
+    ctx.stroke();
+
+    // LAYER 3: All white hot lines in ONE path
+    ctx.beginPath();
+    for (const l of lines) { ctx.moveTo(l.ox, l.oy); ctx.lineTo(l.ex, l.ey); }
+    ctx.strokeStyle = rgba('#ffffff', (0.5 + bp * 0.3) * intensity);
+    ctx.lineWidth = 1 + audio.bass * 0.5;
+    ctx.stroke();
+
     ctx.restore();
   }
 
@@ -252,23 +257,31 @@ const EffectsRenderer = (() => {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
+    // Batch all glow circles together
+    ctx.fillStyle = rgba(color, 0.15 * intensity);
+    ctx.beginPath();
     for (let i = particlePool.length - 1; i >= 0; i--) {
       const p = particlePool[i];
       p.x += p.vx; p.y += p.vy;
       p.vy -= 0.015; p.life -= p.decay;
       if (p.life <= 0 || p.y < -30) { particlePool.splice(i, 1); continue; }
-
-      // 2 circles: glow + core (no shadowBlur!)
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.life * 2.5, 0, Math.PI * 2);
-      ctx.fillStyle = rgba(color, p.life * 0.15 * intensity);
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
-      ctx.fillStyle = rgba(color, p.life * (0.6 + bp * 0.2) * intensity);
-      ctx.fill();
+      const r = p.size * p.life * 2.5;
+      ctx.moveTo(p.x + r, p.y);
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
     }
+    ctx.fill();
+
+    // Batch all core circles together
+    const coreAlpha = (0.6 + bp * 0.2) * intensity;
+    ctx.fillStyle = rgba(color, coreAlpha);
+    ctx.beginPath();
+    for (const p of particlePool) {
+      const r = p.size * p.life;
+      ctx.moveTo(p.x + r, p.y);
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    }
+    ctx.fill();
+
     ctx.restore();
   }
 
@@ -291,7 +304,6 @@ const EffectsRenderer = (() => {
     ctx.globalCompositeOperation = 'screen';
 
     for (let i = 0; i < barCount; i++) {
-      // Map 48 bars to 64 bands
       const bandIdx = Math.floor(i * bands.length / barCount);
       const raw = bands[bandIdx] || 0;
       const barH = Math.max(raw * maxH + 4 + bp * 15, 4);
@@ -363,8 +375,9 @@ const EffectsRenderer = (() => {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Light dots - reduced for performance
+    // Light dots - batch glow and core separately
     const rotSpeed = t * speed * 0.6;
+    const dots = [];
     for (let ring = 0; ring < 4; ring++) {
       const dotsInRing = 5 + ring * 3;
       for (let i = 0; i < dotsInRing; i++) {
@@ -372,28 +385,35 @@ const EffectsRenderer = (() => {
         const dist = 180 + ring * 220 + (audio.bass + bp * 0.3) * 220 * intensity;
         const dotX = cx + Math.cos(angle) * dist;
         const dotY = cy + Math.abs(Math.sin(angle)) * dist * 0.65 + 80 + ring * 35;
-
         if (dotY > H + 50 || dotX < -100 || dotX > W + 100) continue;
-
         const dotSize = 3 + audio.volume * 6 * intensity + bp * 3;
         const alpha = (0.3 + audio.volume * 0.4 + bp * 0.2) * intensity;
-
-        // 2 circles: glow + core
-        ctx.beginPath();
-        ctx.arc(dotX, dotY, dotSize * 2.5, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${(alpha * 0.15).toFixed(2)})`;
-        ctx.fill();
-
-        ctx.beginPath();
-        ctx.arc(dotX, dotY, dotSize, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha.toFixed(2)})`;
-        ctx.fill();
+        dots.push({ x: dotX, y: dotY, size: dotSize, alpha });
       }
     }
+
+    // Batch glow circles
+    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},0.15)`;
+    ctx.beginPath();
+    for (const d of dots) {
+      ctx.moveTo(d.x + d.size * 2.5, d.y);
+      ctx.arc(d.x, d.y, d.size * 2.5, 0, Math.PI * 2);
+    }
+    ctx.fill();
+
+    // Batch core circles
+    ctx.beginPath();
+    for (const d of dots) {
+      ctx.moveTo(d.x + d.size, d.y);
+      ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${dots.length > 0 ? dots[0].alpha.toFixed(2) : '0.3'})`;
+    ctx.fill();
+
     ctx.restore();
   }
 
-  // ═══════════════════ PULSE RING ═══════════════════
+  // ═══════════════════ PULSE RING (BATCHED!) ═══════════════════
   function renderPulsering(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
@@ -407,25 +427,34 @@ const EffectsRenderer = (() => {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
+    // Update rings
     for (let i = pulseRings.length - 1; i >= 0; i--) {
       const ring = pulseRings[i];
       ring.r += ring.speed * (1 + audio.mid * 0.3);
       ring.alpha *= 0.94;
       if (ring.alpha < 0.01 || ring.r > ring.maxR) { pulseRings.splice(i, 1); continue; }
-
-      // 2 strokes: glow + core
-      ctx.beginPath();
-      ctx.arc(W / 2, H / 2, ring.r, 0, Math.PI * 2);
-      ctx.strokeStyle = rgba(color, ring.alpha * 0.3);
-      ctx.lineWidth = Math.max(1, 8 * ring.alpha * intensity);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(W / 2, H / 2, ring.r, 0, Math.PI * 2);
-      ctx.strokeStyle = rgba(color, ring.alpha);
-      ctx.lineWidth = Math.max(1, 2 * ring.alpha * intensity);
-      ctx.stroke();
     }
+
+    // BATCH: All glow rings in ONE path
+    ctx.beginPath();
+    for (const ring of pulseRings) {
+      ctx.moveTo(W / 2 + ring.r, H / 2);
+      ctx.arc(W / 2, H / 2, ring.r, 0, Math.PI * 2);
+    }
+    ctx.strokeStyle = rgba(color, 0.3);
+    ctx.lineWidth = 8 * intensity;
+    ctx.stroke();
+
+    // BATCH: All core rings in ONE path
+    ctx.beginPath();
+    for (const ring of pulseRings) {
+      ctx.moveTo(W / 2 + ring.r, H / 2);
+      ctx.arc(W / 2, H / 2, ring.r, 0, Math.PI * 2);
+    }
+    ctx.strokeStyle = rgba(color, 0.8);
+    ctx.lineWidth = 2 * intensity;
+    ctx.stroke();
+
     ctx.restore();
   }
 
@@ -465,7 +494,7 @@ const EffectsRenderer = (() => {
     ctx.restore();
   }
 
-  // ═══════════════════ LIGHTNING ═══════════════════
+  // ═══════════════════ LIGHTNING (BATCHED!) ═══════════════════
   let lightningBolts = [];
   function renderLightning(ctx, effect, audio, t) {
     if (!effect.enabled) return;
@@ -495,35 +524,42 @@ const EffectsRenderer = (() => {
 
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
-    for (let i = lightningBolts.length - 1; i >= 0; i--) {
-      const bolt = lightningBolts[i];
-      bolt.life--;
-      bolt.alpha *= 0.6;
-      if (bolt.life <= 0) { lightningBolts.splice(i, 1); continue; }
 
-      // 2 layers: glow + core
-      ctx.beginPath();
+    // Update bolts
+    for (let i = lightningBolts.length - 1; i >= 0; i--) {
+      lightningBolts[i].life--;
+      lightningBolts[i].alpha *= 0.6;
+      if (lightningBolts[i].life <= 0) { lightningBolts.splice(i, 1); }
+    }
+
+    // BATCH: All glow bolts in ONE path
+    ctx.beginPath();
+    for (const bolt of lightningBolts) {
       let started = false;
       for (const pt of bolt.points) {
         if (pt.branch) { ctx.moveTo(pt.x, pt.y); started = true; }
         else if (!started) { ctx.moveTo(pt.x, pt.y); started = true; }
         else ctx.lineTo(pt.x, pt.y);
       }
-      ctx.strokeStyle = rgba(color, bolt.alpha * 0.3 * intensity);
-      ctx.lineWidth = 18;
-      ctx.stroke();
+    }
+    ctx.strokeStyle = rgba(color, 0.3 * intensity);
+    ctx.lineWidth = 18;
+    ctx.stroke();
 
-      ctx.beginPath();
-      started = false;
+    // BATCH: All core bolts in ONE path
+    ctx.beginPath();
+    for (const bolt of lightningBolts) {
+      let started = false;
       for (const pt of bolt.points) {
         if (pt.branch) { ctx.moveTo(pt.x, pt.y); started = true; }
         else if (!started) { ctx.moveTo(pt.x, pt.y); started = true; }
         else ctx.lineTo(pt.x, pt.y);
       }
-      ctx.strokeStyle = rgba('#ffffff', bolt.alpha * intensity);
-      ctx.lineWidth = 2;
-      ctx.stroke();
     }
+    ctx.strokeStyle = rgba('#ffffff', intensity);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
     ctx.restore();
   }
 

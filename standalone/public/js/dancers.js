@@ -1,11 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Procedural Skeletal Dance Animation v7
-// PERFORMANCE OPTIMIZED:
-// - 4 dancers instead of 6 (less CPU)
-// - 2 render passes instead of 4 (way less draw calls)
-// - NO shadowBlur anywhere (manual glow via layered strokes)
-// - Pre-computed color strings (no hex parsing per frame)
-// SIDES ONLY - NEVER in the center area!
+// TwitchDancefloor - CSS/GPU Dancer Renderer v8
+// REVOLUTIONARY: Zero Canvas 2D draw calls!
+// Each dancer = absolutely positioned div elements
+// CSS transforms are GPU-composited by the browser
+// box-shadow glow is GPU-rendered (NOT CPU shadowBlur!)
+// Result: Dancers that DON'T freeze everything!
 // ═══════════════════════════════════════════════════════════════
 
 const DancersRenderer = (() => {
@@ -115,21 +114,141 @@ const DancersRenderer = (() => {
     shoulderW: 18, hipW: 14,
   };
 
-  // ── Pre-computed color strings (avoid hex→rgba conversion every frame!) ──
-  const colorStrings = {};
-  function precomputeColors(hex) {
-    if (colorStrings[hex]) return colorStrings[hex];
+  // ── DOM Elements for each dancer ──
+  const dancerDOM = [];
+  let initialized = false;
+
+  // ── Parse hex color to RGB ──
+  function hexToRgb(hex) {
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
-    const cache = {};
-    // Pre-compute common alpha values
-    for (let a = 0; a <= 10; a++) {
-      const alpha = a / 10;
-      cache[a] = `rgba(${r},${g},${b},${alpha.toFixed(1)})`;
+    return { r, g, b };
+  }
+
+  // ── Create DOM elements for one dancer ──
+  function createDancerDOM(dancer) {
+    const container = document.getElementById('dancers-container');
+    if (!container) return null;
+
+    const rgb = hexToRgb(dancer.color);
+    const glowColor = `rgba(${rgb.r},${rgb.g},${rgb.b},0.6)`;
+    const glowColor2 = `rgba(${rgb.r},${rgb.g},${rgb.b},0.25)`;
+    const glowColor3 = `rgba(${rgb.r},${rgb.g},${rgb.b},0.1)`;
+
+    // Wrapper for entire dancer
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;will-change:opacity,transform;transform:translateZ(0);';
+
+    const bones = {};
+    const boneConfigs = [
+      { name: 'torso',       thick: 20 },
+      { name: 'neck',        thick: 9 },
+      { name: 'lUpperArm',   thick: 11 },
+      { name: 'lForearm',    thick: 10 },
+      { name: 'rUpperArm',   thick: 11 },
+      { name: 'rForearm',    thick: 10 },
+      { name: 'lThigh',      thick: 13 },
+      { name: 'lShin',       thick: 12 },
+      { name: 'rThigh',      thick: 13 },
+      { name: 'rShin',       thick: 12 },
+    ];
+
+    // Create bone divs (rectangles)
+    for (const cfg of boneConfigs) {
+      const el = document.createElement('div');
+      el.className = 'dancer-bone';
+      const br = cfg.thick / 2;
+      el.style.cssText = `
+        position:absolute;pointer-events:none;
+        will-change:transform;transform:translateZ(0);
+        -webkit-backface-visibility:hidden;backface-visibility:hidden;
+        border-radius:${br}px;
+        background:rgba(8,8,18,0.85);
+        box-shadow:0 0 10px ${glowColor},0 0 25px ${glowColor2},0 0 50px ${glowColor3};
+      `;
+      wrapper.appendChild(el);
+      bones[cfg.name] = el;
     }
-    colorStrings[hex] = cache;
-    return cache;
+
+    // Head (circle)
+    const head = document.createElement('div');
+    head.className = 'dancer-bone';
+    head.style.cssText = `
+      position:absolute;pointer-events:none;
+      will-change:transform;transform:translateZ(0);
+      -webkit-backface-visibility:hidden;backface-visibility:hidden;
+      border-radius:50%;
+      background:rgba(8,8,18,0.85);
+      box-shadow:0 0 12px ${glowColor},0 0 30px ${glowColor2},0 0 55px ${glowColor3};
+    `;
+    wrapper.appendChild(head);
+    bones.head = head;
+
+    // Hands (circles)
+    for (const handName of ['lHand', 'rHand']) {
+      const el = document.createElement('div');
+      el.className = 'dancer-bone';
+      el.style.cssText = `
+        position:absolute;pointer-events:none;
+        will-change:transform;transform:translateZ(0);
+        -webkit-backface-visibility:hidden;backface-visibility:hidden;
+        border-radius:50%;
+        background:rgba(8,8,18,0.85);
+        box-shadow:0 0 8px ${glowColor},0 0 20px ${glowColor2};
+      `;
+      wrapper.appendChild(el);
+      bones[handName] = el;
+    }
+
+    // Feet glow (ellipse at base)
+    const feetGlow = document.createElement('div');
+    feetGlow.className = 'dancer-bone';
+    feetGlow.style.cssText = `
+      position:absolute;pointer-events:none;
+      will-change:transform,opacity;transform:translateZ(0);
+      -webkit-backface-visibility:hidden;backface-visibility:hidden;
+      border-radius:50%;
+      background:${dancer.color};
+      opacity:0;
+    `;
+    wrapper.appendChild(feetGlow);
+    bones.feetGlow = feetGlow;
+
+    container.appendChild(wrapper);
+    return { wrapper, bones, dancer };
+  }
+
+  // ── Initialize all dancer DOM elements ──
+  function init() {
+    if (initialized) return;
+    for (const dancer of dancers) {
+      const dom = createDancerDOM(dancer);
+      if (dom) dancerDOM.push(dom);
+    }
+    initialized = true;
+  }
+
+  // ── Update a bone div connecting two joints ──
+  function updateBone(el, x1, y1, x2, y2, thickness, scale) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 0.5) { el.style.display = 'none'; return; }
+    const angle = Math.atan2(dy, dx);
+    const t = thickness * scale;
+    el.style.display = '';
+    el.style.width = len + 'px';
+    el.style.height = t + 'px';
+    el.style.transformOrigin = '0 50%';
+    el.style.transform = `translate(${x1}px,${y1 - t / 2}px) rotate(${angle}rad)`;
+  }
+
+  // ── Update a circular element (head/hand) ──
+  function updateCircle(el, x, y, radius, scale) {
+    const r = radius * scale;
+    el.style.width = r * 2 + 'px';
+    el.style.height = r * 2 + 'px';
+    el.style.transform = `translate(${x - r}px,${y - r}px)`;
   }
 
   // ── Forward Kinematics ──
@@ -199,138 +318,73 @@ const DancersRenderer = (() => {
     };
   }
 
-  // ── FAST limb drawing ──
-  function drawLimb(ctx, j1, j2, j3) {
-    ctx.beginPath();
-    ctx.moveTo(j1.x, j1.y);
-    ctx.lineTo(j2.x, j2.y);
-    ctx.lineTo(j3.x, j3.y);
-    ctx.stroke();
-  }
-
-  // ── Draw dancer - ONLY 2 PASSES for max performance ──
-  function drawDancer(ctx, j, color, intensity, bp, scale) {
-    const colors = precomputeColors(color);
-    const alpha = (0.55 + intensity * 0.35) * (0.75 + bp * 0.25);
-    const s = scale;
-
-    ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    // ── PASS 1: Glow (thick, semi-transparent) ──
-    const glowAlpha = Math.round(alpha * 0.25 * 10) / 10;
-    ctx.strokeStyle = colors[Math.min(Math.round(glowAlpha * 10), 10)] || colors[2];
-    ctx.fillStyle = ctx.strokeStyle;
-
-    ctx.lineWidth = 22 * s;
-    ctx.beginPath();
-    ctx.moveTo(j.hip.x, j.hip.y);
-    ctx.lineTo(j.neck.x, j.neck.y);
-    ctx.stroke();
-
-    ctx.beginPath();
-    ctx.arc(j.head.x, j.head.y, BONE.headR * s + 6, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.lineWidth = 16 * s;
-    drawLimb(ctx, j.lShoulder, j.lElbow, j.lHand);
-    drawLimb(ctx, j.rShoulder, j.rElbow, j.rHand);
-    drawLimb(ctx, j.lHip, j.lKnee, j.lFoot);
-    drawLimb(ctx, j.rHip, j.rKnee, j.rFoot);
-
-    // ── PASS 2: Solid body ──
-    const bodyAlpha = Math.round(alpha * 10) / 10;
-    ctx.strokeStyle = colors[Math.min(Math.round(bodyAlpha * 10), 10)] || colors[7];
-    ctx.fillStyle = ctx.strokeStyle;
-
-    // Torso shape
-    ctx.beginPath();
-    ctx.moveTo(j.lShoulder.x, j.lShoulder.y);
-    ctx.lineTo(j.rShoulder.x, j.rShoulder.y);
-    ctx.lineTo(j.rHip.x, j.rHip.y);
-    ctx.lineTo(j.lHip.x, j.lHip.y);
-    ctx.closePath();
-    ctx.fill();
-
-    // Head
-    ctx.beginPath();
-    ctx.arc(j.head.x, j.head.y, BONE.headR * s, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Neck
-    ctx.lineWidth = 8 * s;
-    ctx.beginPath();
-    ctx.moveTo(j.neck.x, j.neck.y);
-    ctx.lineTo(j.head.x, j.head.y);
-    ctx.stroke();
-
-    // Arms
-    ctx.lineWidth = 8 * s;
-    drawLimb(ctx, j.lShoulder, j.lElbow, j.lHand);
-    drawLimb(ctx, j.rShoulder, j.rElbow, j.rHand);
-
-    // Legs
-    ctx.lineWidth = 9 * s;
-    drawLimb(ctx, j.lHip, j.lKnee, j.lFoot);
-    drawLimb(ctx, j.rHip, j.rKnee, j.rFoot);
-
-    // Hands
-    ctx.beginPath();
-    ctx.arc(j.lHand.x, j.lHand.y, BONE.handR * s, 0, Math.PI * 2);
-    ctx.arc(j.rHand.x, j.rHand.y, BONE.handR * s, 0, Math.PI * 2);
-    ctx.fill();
-
-    // White core lines (thin, looks sharp)
-    ctx.strokeStyle = `rgba(255,255,255,${(alpha * 0.4).toFixed(1)})`;
-    ctx.lineWidth = 2 * s;
-    drawLimb(ctx, j.lShoulder, j.lElbow, j.lHand);
-    drawLimb(ctx, j.rShoulder, j.rElbow, j.rHand);
-    ctx.beginPath();
-    ctx.moveTo(j.hip.x, j.hip.y);
-    ctx.lineTo(j.neck.x, j.neck.y);
-    ctx.stroke();
-
-    // Beat flash at feet
-    if (bp > 0.3) {
-      ctx.globalAlpha = bp * 0.4 * intensity;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.ellipse(j.hip.x, j.hip.y + 8, 50 * s, 10 * s, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.globalAlpha = 1;
-    }
-
-    ctx.restore();
-  }
-
-  // ── Main Render ──
-  function render(ctx, effect, audio, t) {
-    if (!effect.enabled) return;
+  // ── Main Render - CSS transform updates only, ZERO canvas calls ──
+  function render(effect, audio, t) {
+    // Initialize DOM elements on first call
+    if (!initialized) init();
 
     const intensity = effect.intensity;
     const bass = audio.bass || 0;
     const bp = audio.beatPulse || 0;
 
-    for (const dancer of dancers) {
-      const style = STYLES[dancer.style];
+    for (const dom of dancerDOM) {
+      const d = dom.dancer;
+      const style = STYLES[d.style];
       if (!style) continue;
 
-      const dt = t * style.speed + dancer.phase;
+      if (!effect.enabled) {
+        dom.wrapper.style.display = 'none';
+        continue;
+      }
+
+      dom.wrapper.style.display = '';
+      // Modulate opacity based on beat pulse - GPU-composited!
+      dom.wrapper.style.opacity = (0.55 + intensity * 0.35 + bp * 0.1).toFixed(2);
+
+      const dt = t * style.speed + d.phase;
       const pose = style.getPose(dt, bass, bp);
 
-      const xPositions = dancer.side === 'left' ? LEFT_X : RIGHT_X;
-      const baseX = xPositions[dancer.slot] || xPositions[0];
+      const xPositions = d.side === 'left' ? LEFT_X : RIGHT_X;
+      const baseX = xPositions[d.slot] || xPositions[0];
       const baseY = H - 20;
 
       const hipX = baseX + pose.sway;
       const hipY = baseY - pose.bounce - 30;
 
-      const flip = dancer.side === 'right';
-      const joints = calculateJoints(hipX, hipY, pose, dancer.scale, flip);
+      const flip = d.side === 'right';
+      const j = calculateJoints(hipX, hipY, pose, d.scale, flip);
+      const s = d.scale;
 
-      drawDancer(ctx, joints, dancer.color, intensity, bp, dancer.scale);
+      // Update all bone positions via CSS transforms
+      updateBone(dom.bones.torso, j.hip.x, j.hip.y, j.neck.x, j.neck.y, 20, s);
+      updateBone(dom.bones.neck, j.neck.x, j.neck.y, j.head.x, j.head.y, 9, s);
+      updateCircle(dom.bones.head, j.head.x, j.head.y, BONE.headR, s);
+
+      updateBone(dom.bones.lUpperArm, j.lShoulder.x, j.lShoulder.y, j.lElbow.x, j.lElbow.y, 11, s);
+      updateBone(dom.bones.lForearm, j.lElbow.x, j.lElbow.y, j.lHand.x, j.lHand.y, 10, s);
+      updateCircle(dom.bones.lHand, j.lHand.x, j.lHand.y, BONE.handR, s);
+
+      updateBone(dom.bones.rUpperArm, j.rShoulder.x, j.rShoulder.y, j.rElbow.x, j.rElbow.y, 11, s);
+      updateBone(dom.bones.rForearm, j.rElbow.x, j.rElbow.y, j.rHand.x, j.rHand.y, 10, s);
+      updateCircle(dom.bones.rHand, j.rHand.x, j.rHand.y, BONE.handR, s);
+
+      updateBone(dom.bones.lThigh, j.lHip.x, j.lHip.y, j.lKnee.x, j.lKnee.y, 13, s);
+      updateBone(dom.bones.lShin, j.lKnee.x, j.lKnee.y, j.lFoot.x, j.lFoot.y, 12, s);
+
+      updateBone(dom.bones.rThigh, j.rHip.x, j.rHip.y, j.rKnee.x, j.rKnee.y, 13, s);
+      updateBone(dom.bones.rShin, j.rKnee.x, j.rKnee.y, j.rFoot.x, j.rFoot.y, 12, s);
+
+      // Beat flash at feet - opacity modulation (GPU-composited)
+      if (bp > 0.3) {
+        const feetGlow = dom.bones.feetGlow;
+        feetGlow.style.display = '';
+        feetGlow.style.width = (100 * s) + 'px';
+        feetGlow.style.height = (20 * s) + 'px';
+        feetGlow.style.transform = `translate(${hipX - 50 * s}px,${hipY}px)`;
+        feetGlow.style.opacity = (bp * 0.4 * intensity).toFixed(2);
+      } else {
+        dom.bones.feetGlow.style.display = 'none';
+      }
     }
   }
 

@@ -1,9 +1,9 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Audio Analyzer v7
-// FIXED: Internal analysis loop at exactly 30fps
-// getData() is now a PURE READ - no side effects!
-// Previous bug: getData() called from 2 places (25fps + 60fps)
-// = combined ~85fps = broken beat detection + wrong BPM
+// TwitchDancefloor - Audio Analyzer v8
+// REVOLUTIONARY: Autocorrelation-based BPM detection!
+// Industry-standard algorithm used by DJ software
+// + Onset-based beat detection (not raw bass threshold)
+// + Octave correction (prefer 100-180 BPM range)
 // ═══════════════════════════════════════════════════════════════
 
 const AudioAnalyzer = (() => {
@@ -12,7 +12,7 @@ const AudioAnalyzer = (() => {
   let source = null;
   let currentStream = null;
   let dataArray = null;
-  let sensitivity = 1.0;  // Lowered default - was 1.2, still too hot
+  let sensitivity = 1.0;
   let currentSourceName = 'Keine';
 
   // ── Analysis loop (internal, fixed 30fps) ──
@@ -28,21 +28,28 @@ const AudioAnalyzer = (() => {
     sourceName: 'Keine'
   };
 
-  // ── Beat detection state ──
-  const BASS_HISTORY_SIZE = 43; // ~1.43 seconds at 30fps
-  let bassHistory = new Float32Array(BASS_HISTORY_SIZE);
-  let bassHistoryIdx = 0;
-  let bassHistoryFilled = false;
-  let lastBeatTime = 0;
-  let beatDecay = 0;
+  // ── Smoothed frequency values ──
+  let smoothBass = 0, smoothMid = 0, smoothHigh = 0, smoothVol = 0;
   let prevBass = 0;
 
-  // BPM estimation
-  let beatTimes = [];
-  let estimatedBPM = 120;
+  // ── Onset-based beat detection ──
+  // Instead of raw bass threshold, detect sudden INCREASES in bass
+  const ONSET_HISTORY_SIZE = 60; // 2 seconds at 30fps
+  let onsetHistory = new Float32Array(ONSET_HISTORY_SIZE);
+  let onsetIdx = 0;
+  let onsetHistoryFilled = false;
+  let lastBeatTime = 0;
+  let beatDecay = 0;
 
-  // Smoothed values
-  let smoothBass = 0, smoothMid = 0, smoothHigh = 0, smoothVol = 0;
+  // ── Autocorrelation BPM estimation ──
+  // Buffer of onset strengths for autocorrelation analysis
+  const AC_BUFFER_SIZE = 180; // 6 seconds at 30fps - enough for tempo analysis
+  let acBuffer = new Float32Array(AC_BUFFER_SIZE);
+  let acIdx = 0;
+  let acBufferFilled = false;
+  let estimatedBPM = 120;
+  let bpmConfidence = 0; // 0-1, how confident we are in the BPM
+  let lastBPMEstimateTime = 0;
 
   // 64-band equalizer
   const EQ_BANDS = 64;
@@ -55,13 +62,13 @@ const AudioAnalyzer = (() => {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 4096;
-    analyser.smoothingTimeConstant = 0.75;  // Slightly more smoothing for stability
+    analyser.smoothingTimeConstant = 0.7;
     dataArray = new Uint8Array(analyser.frequencyBinCount);
   }
 
   // ── Start internal analysis loop ──
   function startAnalysis() {
-    if (analysisTimer) return; // Already running
+    if (analysisTimer) return;
     console.log('[Audio] Starting analysis at', ANALYSIS_FPS, 'fps');
     analysisTimer = setInterval(analyze, ANALYSIS_INTERVAL);
   }
@@ -72,15 +79,19 @@ const AudioAnalyzer = (() => {
       clearInterval(analysisTimer);
       analysisTimer = null;
     }
-    // Reset beat detection state
     beatDecay = 0;
     prevBass = 0;
     smoothBass = 0; smoothMid = 0; smoothHigh = 0; smoothVol = 0;
-    bassHistory = new Float32Array(BASS_HISTORY_SIZE);
-    bassHistoryIdx = 0;
-    bassHistoryFilled = false;
-    beatTimes = [];
+    onsetHistory = new Float32Array(ONSET_HISTORY_SIZE);
+    onsetIdx = 0;
+    onsetHistoryFilled = false;
+    acBuffer = new Float32Array(AC_BUFFER_SIZE);
+    acIdx = 0;
+    acBufferFilled = false;
     lastBeatTime = 0;
+    beatTimes = [];
+    estimatedBPM = 120;
+    bpmConfidence = 0;
     eqSmooth.fill(0);
     eqBands.fill(0);
     cachedData = {
@@ -245,8 +256,111 @@ const AudioAnalyzer = (() => {
   function getSourceName() { return currentSourceName; }
 
   // ═══════════════════════════════════════════════════════════════
+  // AUTOCORRELATION BPM DETECTION
+  // The industry-standard algorithm used by DJ software (Traktor, etc.)
+  //
+  // How it works:
+  // 1. Collect "onset envelope" - the rate of change in bass energy
+  // 2. Compute autocorrelation - compare the signal with delayed versions
+  // 3. The delay (lag) with highest correlation = beat period = BPM
+  // 4. Apply octave correction (prefer 100-180 BPM range)
+  //
+  // Why this is better than simple threshold:
+  // - Doesn't depend on absolute volume levels
+  // - Works even if beats are soft or irregular
+  // - No feedback loop (old bug: wrong BPM → wrong interval → wrong beats)
+  // ═══════════════════════════════════════════════════════════════
+
+  function estimateBPMAutocorrelation() {
+    // Need at least 3 seconds of data for reliable estimation
+    const filledLen = acBufferFilled ? AC_BUFFER_SIZE : acIdx;
+    if (filledLen < 90) return; // Need at least 3 seconds
+
+    // BPM range to search: 70-200 BPM
+    // At 30fps: 70 BPM = lag of 25.7 frames, 200 BPM = lag of 9 frames
+    const minLag = Math.floor(ANALYSIS_FPS * 60 / 200); // 9 frames = 200 BPM
+    const maxLag = Math.floor(ANALYSIS_FPS * 60 / 70);  // 25 frames = 70 BPM
+
+    // Compute autocorrelation for each candidate lag
+    let bestLag = minLag;
+    let bestCorr = -Infinity;
+    let secondBestCorr = -Infinity;
+
+    const correlations = [];
+
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let sum = 0;
+      let count = 0;
+
+      // Compare signal with itself shifted by 'lag' frames
+      for (let i = 0; i < filledLen - lag; i++) {
+        const idx1 = (acIdx - filledLen + i + AC_BUFFER_SIZE) % AC_BUFFER_SIZE;
+        const idx2 = (acIdx - filledLen + i + lag + AC_BUFFER_SIZE) % AC_BUFFER_SIZE;
+        sum += acBuffer[idx1] * acBuffer[idx2];
+        count++;
+      }
+
+      const corr = count > 0 ? sum / count : 0;
+      correlations.push({ lag, corr });
+
+      if (corr > bestCorr) {
+        secondBestCorr = bestCorr;
+        bestCorr = corr;
+        bestLag = lag;
+      } else if (corr > secondBestCorr) {
+        secondBestCorr = corr;
+      }
+    }
+
+    if (bestCorr <= 0) return;
+
+    // Convert best lag to BPM
+    let rawBPM = (ANALYSIS_FPS * 60) / bestLag;
+
+    // ── Octave Correction ──
+    // Autocorrelation often detects half-tempo or double-tempo.
+    // For electronic music (our main use case), prefer 100-180 BPM.
+    // If BPM is below 100, it's likely a half-tempo detection → multiply by 2
+    // If BPM is above 200, it's likely double-tempo → divide by 2
+    if (rawBPM < 80) {
+      rawBPM *= 2; // Half-tempo detected, correct upward
+    } else if (rawBPM > 80 && rawBPM < 100) {
+      // Check if double-tempo makes more sense
+      // If the correlation at half the lag is strong, double it
+      const halfLag = Math.round(bestLag / 2);
+      if (halfLag >= minLag) {
+        const halfCorr = correlations.find(c => c.lag === halfLag);
+        if (halfCorr && halfCorr.corr > bestCorr * 0.6) {
+          rawBPM *= 2; // Strong correlation at double-tempo
+        }
+      }
+    } else if (rawBPM > 200) {
+      rawBPM /= 2; // Double-tempo detected, correct downward
+    }
+
+    // Clamp to reasonable range
+    rawBPM = Math.max(60, Math.min(220, rawBPM));
+
+    // Confidence: ratio of best to second-best correlation
+    bpmConfidence = secondBestCorr > 0 ? Math.min(1, bestCorr / secondBestCorr) : 1;
+
+    // Smooth BPM changes - don't jump wildly
+    // Only update if confidence is reasonable
+    if (bpmConfidence > 0.7) {
+      const blendFactor = 0.25; // Slow convergence
+      estimatedBPM = estimatedBPM * (1 - blendFactor) + rawBPM * blendFactor;
+    } else if (bpmConfidence > 0.5) {
+      // Low confidence - even slower convergence
+      estimatedBPM = estimatedBPM * 0.95 + rawBPM * 0.05;
+    }
+    // Very low confidence: don't update at all
+
+    // Round to nearest integer for display
+    estimatedBPM = Math.round(estimatedBPM);
+  }
+
+  // ═══════════════════════════════════════════════════════════════
   // INTERNAL ANALYSIS - Runs at exactly 30fps, updates cachedData
-  // This is the ONLY place where audio state is modified
   // ═══════════════════════════════════════════════════════════════
   function analyze() {
     if (!analyser || !dataArray) return;
@@ -258,6 +372,8 @@ const AudioAnalyzer = (() => {
     const binHz = sampleRate / analyser.fftSize;
 
     // ── Frequency bands ──
+    // Bass: 40-200 Hz (kick drum territory)
+    const bassStart = Math.floor(40 / binHz);
     const bassEnd = Math.min(Math.floor(200 / binHz), len);
     const midEnd = Math.min(Math.floor(3000 / binHz), len);
     const highEnd = Math.min(Math.floor(12000 / binHz), len);
@@ -266,22 +382,22 @@ const AudioAnalyzer = (() => {
     for (let i = 0; i < len; i++) {
       const val = dataArray[i] / 255;
       totalSum += val;
-      if (i < bassEnd) bassSum += val;
+      if (i >= bassStart && i < bassEnd) bassSum += val;
       else if (i < midEnd) midSum += val;
       else if (i < highEnd) highSum += val;
     }
 
-    // Moderate weighting
-    const rawBass = (bassSum / Math.max(bassEnd, 1)) * sensitivity * 1.0;
+    // Weighted frequency bands
+    const rawBass = (bassSum / Math.max(bassEnd - bassStart, 1)) * sensitivity * 1.2;
     const rawMid = (midSum / Math.max(midEnd - bassEnd, 1)) * sensitivity * 0.8;
     const rawHigh = (highSum / Math.max(highEnd - midEnd, 1)) * sensitivity * 0.7;
     const rawVol = (totalSum / len) * sensitivity * 0.8;
 
     // Smoothing - tuned for 30fps analysis rate
-    smoothBass = smoothBass * 0.6 + rawBass * 0.4;
-    smoothMid = smoothMid * 0.65 + rawMid * 0.35;
-    smoothHigh = smoothHigh * 0.65 + rawHigh * 0.35;
-    smoothVol = smoothVol * 0.65 + rawVol * 0.35;
+    smoothBass = smoothBass * 0.55 + rawBass * 0.45;
+    smoothMid = smoothMid * 0.6 + rawMid * 0.4;
+    smoothHigh = smoothHigh * 0.6 + rawHigh * 0.4;
+    smoothVol = smoothVol * 0.6 + rawVol * 0.4;
 
     // ── 64-band Equalizer ──
     for (let i = 0; i < EQ_BANDS; i++) {
@@ -294,67 +410,62 @@ const AudioAnalyzer = (() => {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // BEAT DETECTION - Now runs at exactly 30fps (was broken before!)
+    // ONSET-BASED BEAT DETECTION
+    // Detect sudden INCREASES in bass energy (onsets), not absolute levels
+    // This is far more accurate than simple threshold detection
     // ═══════════════════════════════════════════════════════════════
-    bassHistory[bassHistoryIdx] = smoothBass;
-    bassHistoryIdx = (bassHistoryIdx + 1) % bassHistory.length;
-    if (bassHistoryIdx === 0) bassHistoryFilled = true;
 
-    // Calculate average bass from history
-    const historyLen = bassHistoryFilled ? bassHistory.length : bassHistoryIdx;
-    let bassAvg = 0;
-    for (let i = 0; i < historyLen; i++) bassAvg += bassHistory[i];
-    bassAvg /= Math.max(historyLen, 1);
+    // Onset strength = positive change in bass (only increases matter)
+    const onsetStrength = Math.max(0, smoothBass - prevBass) * 3.0;
+
+    // Store in onset history for threshold calculation
+    onsetHistory[onsetIdx] = onsetStrength;
+    onsetIdx = (onsetIdx + 1) % onsetHistory.length;
+    if (onsetIdx === 0) onsetHistoryFilled = true;
+
+    // Also store in autocorrelation buffer
+    acBuffer[acIdx] = onsetStrength;
+    acIdx = (acIdx + 1) % AC_BUFFER_SIZE;
+    if (acIdx === 0) acBufferFilled = true;
+
+    // Calculate average onset strength from history
+    const historyLen = onsetHistoryFilled ? onsetHistory.length : onsetIdx;
+    let onsetAvg = 0;
+    for (let i = 0; i < historyLen; i++) onsetAvg += onsetHistory[i];
+    onsetAvg /= Math.max(historyLen, 1);
 
     const now = performance.now();
 
-    // Minimum beat interval based on BPM
-    // At 128 BPM: interval = 469ms, minInterval = 469 * 0.65 = 305ms
-    // This prevents detecting on half-beats (eighth notes)
-    const beatInterval = 60000 / Math.max(estimatedBPM, 60);
-    const minBeatInterval = Math.max(280, beatInterval * 0.65);
+    // Beat detection conditions - IMPROVED:
+    // 1. Onset strength must exceed average by factor (adaptive threshold)
+    // 2. Must exceed minimum threshold (avoid triggering on silence)
+    // 3. Must have minimum interval between beats (based on BPM range)
+    // 4. NO FEEDBACK LOOP: minInterval is based on BPM range, not estimatedBPM
 
-    // Beat detection conditions
-    const isAboveAverage = smoothBass > bassAvg * 1.4;
-    const isAboveMinimum = smoothBass > 0.3;
-    const isRising = smoothBass > prevBass;
+    // Fixed minimum beat interval: 270ms corresponds to ~222 BPM max
+    // This prevents double-triggering without creating a feedback loop
+    const minBeatInterval = 270; // Fixed! Not based on estimatedBPM
+    const isAboveThreshold = onsetStrength > Math.max(onsetAvg * 1.5, 0.08);
     const hasCooldownElapsed = (now - lastBeatTime) > minBeatInterval;
 
-    const isBeat = isAboveAverage && isAboveMinimum && isRising && hasCooldownElapsed;
+    // Also check that bass is actually present (avoid false triggers in silence)
+    const bassIsPresent = smoothBass > 0.15;
+
+    const isBeat = isAboveThreshold && hasCooldownElapsed && bassIsPresent;
 
     if (isBeat) {
       lastBeatTime = now;
       beatDecay = 1.0;
+    }
 
-      // BPM estimation
-      beatTimes.push(now);
-      if (beatTimes.length > 16) beatTimes.shift();
-
-      if (beatTimes.length >= 4) {
-        const recentBeats = beatTimes.slice(-10);
-        let intervals = [];
-        for (let i = 1; i < recentBeats.length; i++) {
-          const interval = recentBeats[i] - recentBeats[i-1];
-          // Only consider intervals that represent reasonable BPM (50-220)
-          if (interval > 270 && interval < 1200) intervals.push(interval);
-        }
-        if (intervals.length >= 2) {
-          // Use MEDIAN instead of average - more robust against outliers
-          intervals.sort((a, b) => a - b);
-          const medianInterval = intervals[Math.floor(intervals.length / 2)];
-          const newBPM = Math.round(60000 / medianInterval);
-          if (newBPM >= 50 && newBPM <= 220) {
-            // Smooth BPM changes - don't jump wildly
-            estimatedBPM = estimatedBPM * 0.75 + newBPM * 0.25;
-          }
-        }
-      }
+    // ── BPM Estimation via Autocorrelation ──
+    // Run every 500ms (not every frame - it's computationally heavier)
+    if (now - lastBPMEstimateTime > 500) {
+      estimateBPMAutocorrelation();
+      lastBPMEstimateTime = now;
     }
 
     // Beat pulse decay - tuned for 30fps
-    // At 30fps: after 100ms (3 frames), decay = 0.82^3 = 0.55 (still visible)
-    // At 30fps: after 200ms (6 frames), decay = 0.82^6 = 0.30 (fading)
-    // At 30fps: after 333ms (10 frames), decay = 0.82^10 = 0.14 (mostly gone)
     beatDecay *= 0.82;
     prevBass = smoothBass;
 
@@ -366,7 +477,7 @@ const AudioAnalyzer = (() => {
       volume: Math.min(smoothVol, 1),
       beat: isBeat,
       beatPulse: beatDecay,
-      bpm: Math.round(estimatedBPM),
+      bpm: estimatedBPM,
       eqBands: Array.from(eqBands),
       sourceName: currentSourceName
     };

@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Overlay Main Loop v7
+// TwitchDancefloor - Overlay Main Loop v8
 // HALF-RESOLUTION canvas: 960x540 internal, CSS scaled to 1920x1080
-// = 4x fewer pixels to render = massive GPU/CPU savings
+// Dancers now use CSS/GPU (ZERO canvas draw calls!)
 // Frame rate capped at 30fps (OBS doesn't need more)
 // TRANSPARENT background for OBS Browser Source
 // ═══════════════════════════════════════════════════════════════
@@ -10,10 +10,6 @@
   const ctx = canvas.getContext('2d');
 
   // ═══ HALF-RESOLUTION RENDERING ═══
-  // Internal canvas is 960x540 but all drawing code uses 1920x1080
-  // coordinates via ctx.scale(0.5, 0.5). CSS scales display to 1920x1080.
-  // This reduces pixel count by 4x = massive performance gain.
-  // Glow/blur effects look IDENTICAL at half-res (they're soft anyway).
   const W = 1920, H = 1080;
   ctx.scale(0.5, 0.5);
   ctx.imageSmoothingEnabled = true;
@@ -70,16 +66,16 @@
       currentAudio.beatPulse *= 0.85;
     }
 
-    // Clear - fully transparent for OBS
+    // Clear canvas - fully transparent for OBS
     ctx.clearRect(0, 0, W, H);
 
-    // Render all effects
+    // Render all effects on canvas (batched for performance)
     EffectsRenderer.render(ctx, effects, currentAudio, t);
 
-    // Render dancers (sides only)
+    // Render dancers via CSS/GPU (NO canvas draw calls!)
     const dancerEffect = effects.find(e => e.id === 'dancers');
     if (dancerEffect) {
-      DancersRenderer.render(ctx, dancerEffect, currentAudio, t);
+      DancersRenderer.render(dancerEffect, currentAudio, t);
     }
   }
 

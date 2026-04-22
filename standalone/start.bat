@@ -1,7 +1,7 @@
 @echo off
-title TwitchDancefloor v0.0.5
+title TwitchDancefloor v0.0.8
 echo.
-echo   TwitchDancefloor v0.0.5
+echo   TwitchDancefloor v0.0.8
 echo   Music Reactive Light Show Overlay
 echo.
 echo   Starting server on port 3131...
