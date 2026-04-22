@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor v0.0.1 - Standalone Server
+// TwitchDancefloor v0.0.4 - Standalone Server
 // OBS Music Reactive Light Show Overlay
+// Audio data flows: Admin -> Server -> Overlay
 // ═══════════════════════════════════════════════════════════════
 
 const http = require('http');
@@ -34,7 +35,7 @@ const defaultEffects = [
 let effects = JSON.parse(JSON.stringify(defaultEffects));
 let commands = [];
 let channelConfig = { channelName: '', platform: 'twitch', connected: false };
-let audioData = { bass: 0, mid: 0, high: 0, volume: 0, beat: false };
+let audioData = { bass: 0, mid: 0, high: 0, volume: 0, beat: false, beatPulse: 0, bpm: 120, eqBands: [] };
 const commandCooldowns = new Map();
 let twitchWs = null;
 
@@ -134,7 +135,7 @@ function processChatCommand(username, content) {
 
       io.emit('effect-update', effect);
       io.emit('chat-trigger', { username, command: cmd.command, effectId: cmd.effectId, action: cmd.action, effectName: effect.name });
-      console.log(`[CMD] ${username}: ${cmd.command} → ${effect.name} (${cmd.action})`);
+      console.log(`[CMD] ${username}: ${cmd.command} -> ${effect.name} (${cmd.action})`);
     }
   }
 }
@@ -178,11 +179,11 @@ io.on('connection', (socket) => {
   socket.on('connect-channel', (data) => connectTwitch(data.channelName));
   socket.on('disconnect-channel', () => disconnectTwitch());
 
-  // Audio
-  socket.on('audio-data', (data) => { audioData = data; socket.broadcast.emit('audio-data', data); });
-
-  // Audio commands from admin to overlay
-  socket.on('audio-command', (data) => { socket.broadcast.emit('audio-command', data); });
+  // Audio data - relay from admin to all other clients (overlay)
+  socket.on('audio-data', (data) => {
+    audioData = data;
+    socket.broadcast.emit('audio-data', data);
+  });
 
   // Manual trigger
   socket.on('trigger-effect', (data) => {
@@ -210,16 +211,12 @@ io.on('connection', (socket) => {
 // ═══════════════════════ START ═══════════════════════
 httpServer.listen(PORT, () => {
   console.log('');
-  console.log('  ████████╗██╗██╗  ██╗███████╗███████╗███████╗███╗   ██╗███████╗');
-  console.log('  ╚══██╔══╝██║██║ ██╔╝██╔════╝██╔════╝██╔════╝████╗  ██║██╔════╝');
-  console.log('     ██║   ██║█████╔╝ █████╗  ███████╗█████╗  ██╔██╗ ██║█████╗  ');
-  console.log('     ██║   ██║██╔═██╗ ██╔══╝  ╚════██║██╔══╝  ██║╚██╗██║██╔══╝  ');
-  console.log('     ██║   ██║██║  ██╗███████╗███████║███████╗██║ ╚████║███████╗');
-  console.log('     ╚═╝   ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝');
-  console.log('');
-  console.log('  [v0.0.1] Music Reactive Light Show Overlay');
+  console.log('  TwitchDancefloor v0.0.4 - Music Reactive Light Show Overlay');
   console.log('');
   console.log('  Overlay:  http://localhost:' + PORT + '/overlay.html');
   console.log('  Admin:    http://localhost:' + PORT + '/admin.html');
+  console.log('');
+  console.log('  TIP: Open admin.html first, select an audio source,');
+  console.log('       then add overlay.html as OBS Browser Source.');
   console.log('');
 });

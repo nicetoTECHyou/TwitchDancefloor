@@ -12,8 +12,8 @@
   <!-- Header -->
   <header class="header">
     <div class="header-left">
-      <h1 class="neunch-title">TwitchDancefloor</h1>
-      <span class="version">v0.0.3</span>
+      <h1 class="neon-title">TwitchDancefloor</h1>
+      <span class="version">v0.0.4</span>
     </div>
     <div class="header-right">
       <div class="connection-status" id="ws-status">
@@ -33,52 +33,86 @@
   <div class="main-content">
     <!-- Sidebar Navigation -->
     <nav class="sidebar">
-      <button class="nav-btn active" data-panel="audio">🔊 Audio</button>
-      <button class="nav-btn" data-panel="effects">💡 Effekte</button>
-      <button class="nav-btn" data-panel="scenes">🎬 Szenen</button>
-      <button class="nav-btn" data-panel="commands">💬 Commands</button>
-      <button class="nav-btn" data-panel="channel">📡 Kanal</button>
-      <button class="nav-btn" data-panel="chatlog">📜 Chat</button>
+      <button class="nav-btn active" data-panel="audio">&#x1F50A; Audio</button>
+      <button class="nav-btn" data-panel="effects">&#x1F4A1; Effekte</button>
+      <button class="nav-btn" data-panel="scenes">&#x1F3AC; Szenen</button>
+      <button class="nav-btn" data-panel="commands">&#x1F4AC; Commands</button>
+      <button class="nav-btn" data-panel="channel">&#x1F4E1; Kanal</button>
+      <button class="nav-btn" data-panel="chatlog">&#x1F4DC; Chat</button>
       <div class="sidebar-spacer"></div>
-      <a href="/overlay.html" target="_blank" class="nav-btn link-btn">🖥 Overlay öffnen</a>
+      <a href="/overlay.html" target="_blank" class="nav-btn link-btn">&#x1F5A5; Overlay &ouml;ffnen</a>
     </nav>
 
     <!-- Panels -->
     <div class="panels">
-      <!-- Audio Panel (NEW - FIRST!) -->
+      <!-- Audio Panel - FIRST AND MOST IMPORTANT -->
       <div class="panel active" id="panel-audio">
-        <h2>Audio-Quelle & Pegel</h2>
+        <h2>Audio-Quelle &amp; Pegel</h2>
         <div class="audio-panel-grid">
           <div class="audio-source-card">
-            <h3>Sound-Quelle wählen</h3>
-            <p class="audio-hint">Wähle hier die Audio-Quelle für die Beat-Erkennung. Das Overlay muss in einem separaten Tab/Fenster geöffnet sein.</p>
+            <h3>Sound-Quelle w&auml;hlen</h3>
+            <p class="audio-hint">W&auml;hle hier die Audio-Quelle f&uuml;r die Beat-Erkennung. Die Analyse l&auml;uft direkt in diesem Browser-Tab und wird an das Overlay gesendet.</p>
+
+            <!-- Device Dropdown -->
+            <div class="device-select-row">
+              <label class="device-label" for="audio-device-select">Audio-Eingabeger&auml;t:</label>
+              <select id="audio-device-select" class="device-dropdown">
+                <option value="">-- Ger&auml;t w&auml;hlen --</option>
+              </select>
+              <button id="btn-refresh-devices" class="btn-icon" title="Ger&auml;te neu laden">&#x1F504;</button>
+              <button id="btn-connect-device" class="btn-connect-device">Verbinden</button>
+            </div>
+
+            <div class="audio-divider">
+              <span class="divider-text">oder Spezial-Quellen</span>
+            </div>
+
             <div class="audio-source-buttons">
-              <button class="audio-src-btn" id="btn-audio-mic">
-                <span class="src-icon">🎤</span>
-                <span class="src-name">Mikrofon</span>
-                <span class="src-desc">Mic-Eingang</span>
-              </button>
               <button class="audio-src-btn primary" id="btn-audio-desktop">
-                <span class="src-icon">🖥</span>
+                <span class="src-icon">&#x1F5A5;</span>
                 <span class="src-name">Desktop Audio</span>
-                <span class="src-desc">Browser-Tab Audio</span>
+                <span class="src-desc">Bildschirmfreigabe + Audio</span>
               </button>
               <button class="audio-src-btn" id="btn-audio-file">
-                <span class="src-icon">🎵</span>
+                <span class="src-icon">&#x1F3B5;</span>
                 <span class="src-name">Audio Datei</span>
-                <span class="src-desc">MP3/WAV/OGG</span>
+                <span class="src-desc">MP3/WAV/OGG abspielen</span>
               </button>
             </div>
             <input type="file" id="audio-file-input" accept="audio/*" style="display:none">
+
+            <!-- Status -->
             <div class="audio-status-row" id="audio-status-row">
               <span class="status-dot audio-dot" id="audio-dot"></span>
               <span id="audio-status-text">Keine Audio-Quelle verbunden</span>
+              <button id="btn-disconnect-audio" class="btn-disconnect-audio" style="display:none">Trennen</button>
+            </div>
+
+            <!-- Tip Box -->
+            <div class="tip-box">
+              <div class="tip-title">&#x1F4A1; Tipp: Desktop-Sound ohne Mikrofon</div>
+              <div class="tip-text">
+                F&uuml;r besten Beat-Detection vom Desktop-Sound:
+                <ol class="tip-list">
+                  <li><strong>VB-Audio Virtual Cable</strong> installieren (kostenlos)</li>
+                  <li>Windows Sound-Einstellungen: Virtual Cable als Aufnahmeger&auml;t aktivieren</li>
+                  <li>Im Dropdown oben das Virtual Cable w&auml;hlen</li>
+                  <li>Oder: Windows &quot;Stereo Mix&quot; in den Sound-Einstellungen aktivieren</li>
+                </ol>
+                Alternative: Den <strong>Desktop Audio</strong> Button nutzen (Bildschirmfreigabe mit Audio).
+              </div>
             </div>
           </div>
-          
+
           <div class="level-meter-card">
             <h3>Pegelmesser</h3>
-            <p class="audio-hint">Hier siehst du ob das richtige Audio ankommt. Bei Desktop Audio sollte der Pegel bei Musik deutlich ausschlagen.</p>
+            <p class="audio-hint">Hier siehst du ob das richtige Audio ankommt. Bei Musik sollte der Pegel deutlich ausschlagen.</p>
+
+            <!-- Real-time waveform -->
+            <div class="waveform-container">
+              <canvas id="waveform-canvas" width="500" height="80"></canvas>
+            </div>
+
             <div class="level-meters">
               <div class="level-row">
                 <span class="level-label">Bass</span>
@@ -108,7 +142,7 @@
             </div>
             <div class="sensitivity-row">
               <span class="sens-label">Empfindlichkeit:</span>
-              <input type="range" id="admin-sensitivity" min="0.5" max="4" step="0.1" value="2.0">
+              <input type="range" id="admin-sensitivity" min="0.5" max="5" step="0.1" value="2.0">
               <span class="sens-value" id="sens-value">2.0</span>
             </div>
           </div>
@@ -120,15 +154,15 @@
         <h2>Effekt-Steuerung</h2>
         <div class="effect-categories">
           <div class="category">
-            <h3>💡 Licht</h3>
+            <h3>&#x1F4A1; Licht</h3>
             <div class="effect-grid" id="grid-light"></div>
           </div>
           <div class="category">
-            <h3>🌫️ Atmosphäre</h3>
+            <h3>&#x1F32B;&#xFE0F; Atmosph&auml;re</h3>
             <div class="effect-grid" id="grid-atmosphere"></div>
           </div>
           <div class="category">
-            <h3>🎨 Visuell</h3>
+            <h3>&#x1F3A8; Visuell</h3>
             <div class="effect-grid" id="grid-visual"></div>
           </div>
         </div>
@@ -139,27 +173,27 @@
         <h2>Schnell-Szenen</h2>
         <div class="scene-grid">
           <button class="scene-btn club" data-scene="club">
-            <span class="scene-icon">🎵</span>
+            <span class="scene-icon">&#x1F3B5;</span>
             <span class="scene-name">Club Mode</span>
             <span class="scene-desc">Laser + Spotlights + Spiegelkugel + Nebel + EQ</span>
           </button>
           <button class="scene-btn rave" data-scene="rave">
-            <span class="scene-icon">⚡</span>
+            <span class="scene-icon">&#x26A1;</span>
             <span class="scene-name">Rave Mode</span>
             <span class="scene-desc">Strobe + Laser + Partikel + Farbflut + Konfetti + Blitze</span>
           </button>
           <button class="scene-btn chill" data-scene="chill">
-            <span class="scene-icon">🌊</span>
+            <span class="scene-icon">&#x1F30A;</span>
             <span class="scene-name">Chill Mode</span>
             <span class="scene-desc">Farbflut + Nebel + Lichtkegel + Rauch</span>
           </button>
           <button class="scene-btn party" data-scene="party">
-            <span class="scene-icon">🎉</span>
+            <span class="scene-icon">&#x1F389;</span>
             <span class="scene-name">Party Mode</span>
-            <span class="scene-desc">Alles aktiv - moderate Intensität</span>
+            <span class="scene-desc">Alles aktiv - moderate Intensit&auml;t</span>
           </button>
           <button class="scene-btn blackout" data-scene="blackout">
-            <span class="scene-icon">⬛</span>
+            <span class="scene-icon">&#x2B1B;</span>
             <span class="scene-name">Blackout</span>
             <span class="scene-desc">Alle Effekte aus</span>
           </button>
@@ -171,7 +205,7 @@
         <h2>Chat Command Center</h2>
         <div class="command-form">
           <select id="cmd-effect">
-            <option value="">Effekt wählen...</option>
+            <option value="">Effekt w&auml;hlen...</option>
           </select>
           <input type="text" id="cmd-command" placeholder="!befehl" maxlength="30">
           <select id="cmd-action">
@@ -180,7 +214,7 @@
             <option value="off">Aus</option>
           </select>
           <input type="number" id="cmd-cooldown" value="5" min="1" max="120" placeholder="Cooldown (s)">
-          <button id="btn-add-command" class="btn-add">+ Hinzufügen</button>
+          <button id="btn-add-command" class="btn-add">+ Hinzuf&uuml;gen</button>
         </div>
         <div class="command-list" id="command-list">
           <p class="empty-msg">Noch keine Commands definiert</p>
@@ -192,7 +226,7 @@
         <h2>Kanal-Einstellungen</h2>
         <div class="channel-card">
           <div class="channel-platform">
-            <span class="platform-icon">🟣</span>
+            <span class="platform-icon">&#x1F7E3;</span>
             <span>Twitch</span>
           </div>
           <div class="channel-input-row">
@@ -204,7 +238,7 @@
             <span class="status-dot ch-dot"></span>
             <span>Nicht verbunden</span>
           </div>
-          <p class="channel-hint">Kein Token nötig! Der Server verbindet sich anonym zum Twitch-Chat und hört auf deine Commands.</p>
+          <p class="channel-hint">Kein Token n&ouml;tig! Der Server verbindet sich anonym zum Twitch-Chat und h&ouml;rt auf deine Commands.</p>
         </div>
       </div>
 
@@ -220,6 +254,7 @@
 </div>
 
 <script src="/js/socket-client.js"></script>
+<script src="/js/audio-analyzer.js"></script>
 <script src="/js/admin.js"></script>
 </body>
 </html>

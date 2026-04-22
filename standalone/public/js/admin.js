@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Admin Panel Logic v2
-// With audio source selector + level meters
+// TwitchDancefloor - Admin Panel Logic v4
+// LOCAL audio capture + device enumeration + level meters
+// Audio is captured HERE in admin, sent to overlay via server
 // ═══════════════════════════════════════════════════════════════
 (function () {
   let effects = [];
@@ -8,14 +9,17 @@
   let channelConfig = { channelName: '', connected: false };
   let chatMessages = [];
   let audioConnected = false;
+  let audioSendInterval = null;
 
-  // ── Connect ──
+  // ── Connect WebSocket ──
   OverlaySocket.connect();
 
   OverlaySocket.on('connected', (state) => {
     const el = document.getElementById('ws-status');
-    el.querySelector('.status-dot').classList.toggle('connected', state);
-    el.querySelector('.status-text').textContent = state ? 'Verbunden' : 'Getrennt';
+    if (el) {
+      el.querySelector('.status-dot').classList.toggle('connected', state);
+      el.querySelector('.status-text').textContent = state ? 'Verbunden' : 'Getrennt';
+    }
   });
 
   OverlaySocket.on('effects-state', (data) => { effects = data; renderEffects(); });
@@ -32,8 +36,6 @@
     updateChannelUI();
   });
 
-  OverlaySocket.on('audio-data', (data) => { updateLevelMeters(data); });
-
   OverlaySocket.on('chat-message', (msg) => {
     chatMessages.push(msg);
     if (chatMessages.length > 100) chatMessages.shift();
@@ -41,7 +43,7 @@
   });
 
   OverlaySocket.on('chat-trigger', (data) => {
-    chatMessages.push({ username: '⚡ System', content: `${data.username} triggered ${data.command} → ${data.effectName}`, timestamp: Date.now(), isSystem: true });
+    chatMessages.push({ username: 'System', content: `${data.username} triggered ${data.command} \u2192 ${data.effectName}`, timestamp: Date.now(), isSystem: true });
     if (chatMessages.length > 100) chatMessages.shift();
     renderChatLog();
   });
@@ -56,54 +58,154 @@
     });
   });
 
-  // ═══════════════════ AUDIO SOURCE ═══════════════════
-  const btnMic = document.getElementById('btn-audio-mic');
+  // ═══════════════════════════════════════════════════════════
+  // AUDIO SOURCE - Device Enumeration & Connection
+  // ═══════════════════════════════════════════════════════════
+
+  const deviceSelect = document.getElementById('audio-device-select');
+  const btnRefresh = document.getElementById('btn-refresh-devices');
+  const btnConnectDevice = document.getElementById('btn-connect-device');
   const btnDesktop = document.getElementById('btn-audio-desktop');
   const btnFile = document.getElementById('btn-audio-file');
   const fileInput = document.getElementById('audio-file-input');
   const audioDot = document.getElementById('audio-dot');
   const audioStatusText = document.getElementById('audio-status-text');
+  const btnDisconnectAudio = document.getElementById('btn-disconnect-audio');
   const sensSlider = document.getElementById('admin-sensitivity');
   const sensValue = document.getElementById('sens-value');
+  const waveformCanvas = document.getElementById('waveform-canvas');
 
-  // These buttons tell the overlay (via WebSocket) to connect audio
-  // The overlay page actually does the audio connection since it has the canvas
-  btnMic.addEventListener('click', () => {
-    OverlaySocket.emit('audio-command', { source: 'mic' });
-    updateAudioStatus(true, 'Mikrofon');
+  // ── Enumerate audio devices ──
+  async function refreshDeviceList() {
+    const devices = await AudioAnalyzer.getDeviceList();
+    const currentVal = deviceSelect.value;
+    deviceSelect.innerHTML = '<option value="">-- Ger&auml;t w&auml;hlen --</option>';
+    for (const dev of devices) {
+      const opt = document.createElement('option');
+      opt.value = dev.id;
+      opt.textContent = dev.name;
+      deviceSelect.appendChild(opt);
+    }
+    // Restore selection if still available
+    if (currentVal) {
+      const found = devices.find(d => d.id === currentVal);
+      if (found) deviceSelect.value = currentVal;
+    }
+    console.log('[Admin] Device list refreshed:', devices.length, 'devices');
+  }
+
+  btnRefresh.addEventListener('click', refreshDeviceList);
+
+  // ── Connect to selected device ──
+  btnConnectDevice.addEventListener('click', async () => {
+    const deviceId = deviceSelect.value;
+    if (!deviceId) {
+      alert('Bitte w\u00e4hle ein Audio-Ger\u00e4t aus dem Dropdown.');
+      return;
+    }
+    const deviceName = deviceSelect.options[deviceSelect.selectedIndex]?.textContent || 'Audio-Ger\u00e4t';
+    const success = await AudioAnalyzer.connectDevice(deviceId, deviceName);
+    if (success) {
+      updateAudioStatus(true, deviceName);
+      startAudioBroadcast();
+    } else {
+      updateAudioStatus(false, 'Verbindung fehlgeschlagen');
+    }
   });
 
-  btnDesktop.addEventListener('click', () => {
-    OverlaySocket.emit('audio-command', { source: 'desktop' });
-    updateAudioStatus(true, 'Desktop Audio');
+  // Also connect on double-click / Enter in dropdown
+  deviceSelect.addEventListener('dblclick', () => btnConnectDevice.click());
+
+  // ── Desktop Audio (Screen Share) ──
+  btnDesktop.addEventListener('click', async () => {
+    const success = await AudioAnalyzer.connectDesktop();
+    if (success) {
+      updateAudioStatus(true, 'Desktop Audio');
+      startAudioBroadcast();
+    } else {
+      updateAudioStatus(false, 'Desktop Audio nicht verf\u00fcgbar');
+    }
   });
 
-  btnFile.addEventListener('click', () => {
-    fileInput.click();
-  });
+  // ── Audio File ──
+  btnFile.addEventListener('click', () => fileInput.click());
 
   fileInput.addEventListener('change', (e) => {
-    // We can't send files via WebSocket easily, so we'll need to handle this in overlay
-    // For now, tell the user to use the overlay's file picker
-    OverlaySocket.emit('audio-command', { source: 'file', fileName: e.target.files[0]?.name || '' });
-    updateAudioStatus(true, 'Datei: ' + (e.target.files[0]?.name || '?'));
+    if (e.target.files[0]) {
+      const success = AudioAnalyzer.connectFile(e.target.files[0]);
+      if (success) {
+        updateAudioStatus(true, 'Datei: ' + e.target.files[0].name);
+        startAudioBroadcast();
+      }
+    }
   });
 
+  // ── Disconnect audio ──
+  btnDisconnectAudio.addEventListener('click', () => {
+    AudioAnalyzer.disconnect();
+    updateAudioStatus(false, 'Getrennt');
+    stopAudioBroadcast();
+  });
+
+  // ── Sensitivity ──
   sensSlider.addEventListener('input', (e) => {
     const val = parseFloat(e.target.value);
     sensValue.textContent = val.toFixed(1);
-    OverlaySocket.emit('audio-command', { sensitivity: val });
+    AudioAnalyzer.setSensitivity(val);
   });
 
-  function updateAudioStatus(connected, source) {
+  // ── Audio status UI ──
+  function updateAudioStatus(connected, sourceName) {
     audioConnected = connected;
     audioDot.classList.toggle('connected', connected);
-    audioStatusText.textContent = connected ? `Verbunden: ${source}` : 'Keine Audio-Quelle verbunden';
+    audioStatusText.textContent = connected ? `Verbunden: ${sourceName}` : sourceName || 'Keine Audio-Quelle verbunden';
+    btnDisconnectAudio.style.display = connected ? 'inline-block' : 'none';
   }
 
-  // ═══════════════════ LEVEL METERS ═══════════════════
-  function updateLevelMeters(data) {
-    // Level bars
+  // ═══════════════════════════════════════════════════════════
+  // AUDIO BROADCAST - Send audio data to server for overlay
+  // ═══════════════════════════════════════════════════════════
+
+  function startAudioBroadcast() {
+    if (audioSendInterval) clearInterval(audioSendInterval);
+    // Send audio data at 25fps to server
+    audioSendInterval = setInterval(() => {
+      if (!AudioAnalyzer.isConnected()) return;
+      const data = AudioAnalyzer.getData();
+      OverlaySocket.emit('audio-data', data);
+    }, 40);
+  }
+
+  function stopAudioBroadcast() {
+    if (audioSendInterval) {
+      clearInterval(audioSendInterval);
+      audioSendInterval = null;
+    }
+    // Send zero data to overlay
+    OverlaySocket.emit('audio-data', {
+      bass: 0, mid: 0, high: 0, volume: 0,
+      beat: false, beatPulse: 0, bpm: 120,
+      eqBands: new Array(64).fill(0),
+      sourceName: 'Keine'
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // LOCAL LEVEL METERS + WAVEFORM (updated at render rate)
+  // ═══════════════════════════════════════════════════════════
+
+  const wfCtx = waveformCanvas ? waveformCanvas.getContext('2d') : null;
+  const WF_W = 500, WF_H = 80;
+
+  function updateLocalMeters() {
+    if (!AudioAnalyzer.isConnected()) {
+      requestAnimationFrame(updateLocalMeters);
+      return;
+    }
+
+    const data = AudioAnalyzer.getData();
+
+    // ── Update level bars ──
     const bars = { bass: data.bass, mid: data.mid, high: data.high, vol: data.volume };
     for (const [key, val] of Object.entries(bars)) {
       const fill = document.getElementById('level-' + key);
@@ -112,7 +214,7 @@
       if (valEl) valEl.textContent = Math.round(val * 100) + '%';
     }
 
-    // Header meters
+    // ── Header meters ──
     const meters = { 'meter-bass': data.bass, 'meter-mid': data.mid, 'meter-high': data.high, 'meter-vol': data.volume };
     for (const [id, val] of Object.entries(meters)) {
       const bar = document.getElementById(id);
@@ -123,11 +225,11 @@
       }
     }
 
-    // Beat indicator
+    // ── Beat indicator ──
     const beatDot = document.getElementById('admin-beat-dot');
     if (beatDot) beatDot.classList.toggle('active', data.beat);
 
-    // BPM
+    // ── BPM ──
     const bpm = data.bpm || 0;
     const bpmEl = document.getElementById('admin-bpm');
     const headerBpm = document.getElementById('bpm-display');
@@ -135,17 +237,83 @@
     if (bpmEl) bpmEl.textContent = bpmText;
     if (headerBpm) headerBpm.textContent = bpmText;
 
-    // Audio connected status from data
-    if (data.volume > 0.01) {
-      audioDot.classList.add('connected');
+    // ── Waveform visualization ──
+    if (wfCtx) {
+      wfCtx.clearRect(0, 0, WF_W, WF_H);
+
+      // Draw 64-band EQ as waveform
+      const bands = data.eqBands;
+      if (bands && bands.length > 0) {
+        const barW = WF_W / bands.length;
+
+        // Background grid
+        wfCtx.strokeStyle = '#1a1a2e';
+        wfCtx.lineWidth = 0.5;
+        for (let y = 0; y < WF_H; y += 20) {
+          wfCtx.beginPath();
+          wfCtx.moveTo(0, y);
+          wfCtx.lineTo(WF_W, y);
+          wfCtx.stroke();
+        }
+
+        // EQ bars
+        for (let i = 0; i < bands.length; i++) {
+          const val = bands[i] || 0;
+          const h = Math.max(2, val * WF_H * 0.9);
+          const x = i * barW;
+          const y = WF_H - h;
+
+          // Gradient per bar
+          const grad = wfCtx.createLinearGradient(x, WF_H, x, y);
+          if (i < 16) {
+            grad.addColorStop(0, '#ff0066');
+            grad.addColorStop(1, '#ff4488');
+          } else if (i < 40) {
+            grad.addColorStop(0, '#ffaa00');
+            grad.addColorStop(1, '#ffcc44');
+          } else {
+            grad.addColorStop(0, '#00aaff');
+            grad.addColorStop(1, '#44ccff');
+          }
+
+          wfCtx.fillStyle = grad;
+          wfCtx.fillRect(x + 1, y, barW - 2, h);
+        }
+
+        // Beat flash
+        if (data.beat) {
+          wfCtx.fillStyle = 'rgba(255, 0, 100, 0.15)';
+          wfCtx.fillRect(0, 0, WF_W, WF_H);
+        }
+      } else {
+        // No data - show flat line
+        wfCtx.strokeStyle = '#333';
+        wfCtx.lineWidth = 1;
+        wfCtx.beginPath();
+        wfCtx.moveTo(0, WF_H / 2);
+        wfCtx.lineTo(WF_W, WF_H / 2);
+        wfCtx.stroke();
+      }
     }
+
+    requestAnimationFrame(updateLocalMeters);
   }
 
-  // ═══════════════════ EFFECTS ═══════════════════
+  // Start local meter animation loop
+  requestAnimationFrame(updateLocalMeters);
+
+  // ── Initial device enumeration ──
+  refreshDeviceList();
+
+  // ═══════════════════════════════════════════════════════════
+  // EFFECTS
+  // ═══════════════════════════════════════════════════════════
+
   function renderEffects() {
     const categories = { light: 'grid-light', atmosphere: 'grid-atmosphere', visual: 'grid-visual' };
     for (const [cat, gridId] of Object.entries(categories)) {
       const grid = document.getElementById(gridId);
+      if (!grid) continue;
       const catEffects = effects.filter(e => e.category === cat);
       grid.innerHTML = catEffects.map(e => effectCardHTML(e)).join('');
       catEffects.forEach(e => bindEffectEvents(e.id, grid));
@@ -164,7 +332,7 @@
         </div>
         <div class="effect-controls">
           <div class="control-row">
-            <span class="control-label">Intensität</span>
+            <span class="control-label">Intensit&auml;t</span>
             <input type="range" min="0" max="1" step="0.05" value="${e.intensity}" data-slider="${e.id}-intensity">
             <span class="control-value" data-value="${e.id}-intensity">${e.intensity.toFixed(2)}</span>
           </div>
@@ -177,7 +345,7 @@
             <span class="control-label">Farbe</span>
             <input type="color" value="${e.color}" data-color="${e.id}">
           </div>
-          <button class="btn-flash" data-flash="${e.id}">⚡ Flash (2s)</button>
+          <button class="btn-flash" data-flash="${e.id}">&#x26A1; Flash (2s)</button>
         </div>
       </div>`;
   }
@@ -215,7 +383,10 @@
     });
   }
 
-  // ═══════════════════ SCENES ═══════════════════
+  // ═══════════════════════════════════════════════════════════
+  // SCENES
+  // ═══════════════════════════════════════════════════════════
+
   document.querySelectorAll('.scene-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const sceneName = btn.dataset.scene;
@@ -249,10 +420,13 @@
     });
   });
 
-  // ═══════════════════ COMMANDS ═══════════════════
+  // ═══════════════════════════════════════════════════════════
+  // COMMANDS
+  // ═══════════════════════════════════════════════════════════
+
   function populateEffectDropdown() {
     const sel = document.getElementById('cmd-effect');
-    sel.innerHTML = '<option value="">Effekt wählen...</option>' +
+    sel.innerHTML = '<option value="">Effekt w&auml;hlen...</option>' +
       effects.map(e => `<option value="${e.id}">${e.name}</option>`).join('');
   }
 
@@ -269,7 +443,7 @@
       id: 'cmd_' + Date.now(),
       command: command.toLowerCase(),
       effectId, action, cooldown,
-      description: `${command} → ${effects.find(e => e.id === effectId)?.name || effectId} (${action})`
+      description: `${command} \u2192 ${effects.find(e => e.id === effectId)?.name || effectId} (${action})`
     };
 
     OverlaySocket.emit('add-command', cmd);
@@ -286,10 +460,10 @@
       const eff = effects.find(e => e.id === cmd.effectId);
       return `<div class="command-item" data-cmd-id="${cmd.id}">
         <span class="cmd-name">${cmd.command}</span>
-        <span class="cmd-effect">→ ${eff?.name || cmd.effectId}</span>
+        <span class="cmd-effect">\u2192 ${eff?.name || cmd.effectId}</span>
         <span class="cmd-action">${cmd.action}</span>
         <span class="cmd-cooldown">${cmd.cooldown}s</span>
-        <button class="btn-remove" data-remove-cmd="${cmd.id}">✕</button>
+        <button class="btn-remove" data-remove-cmd="${cmd.id}">\u2715</button>
       </div>`;
     }).join('');
 
@@ -298,7 +472,10 @@
     });
   }
 
-  // ═══════════════════ CHANNEL ═══════════════════
+  // ═══════════════════════════════════════════════════════════
+  // CHANNEL
+  // ═══════════════════════════════════════════════════════════
+
   document.getElementById('btn-connect-channel').addEventListener('click', () => {
     const name = document.getElementById('channel-name').value.trim();
     if (!name) return;
@@ -321,7 +498,10 @@
     btnDisconnect.disabled = !channelConfig.connected;
   }
 
-  // ═══════════════════ CHAT LOG ═══════════════════
+  // ═══════════════════════════════════════════════════════════
+  // CHAT LOG
+  // ═══════════════════════════════════════════════════════════
+
   function renderChatLog() {
     const log = document.getElementById('chat-log');
     log.innerHTML = chatMessages.map(msg => {

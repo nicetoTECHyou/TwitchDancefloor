@@ -1,6 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Overlay Main Loop v2
-// TRANSPARENT background, audio command from admin
+// TwitchDancefloor - Overlay Main Loop v4
+// TRANSPARENT background, receives audio data from admin via server
+// NO local audio capture - all audio is handled by admin panel
 // ═══════════════════════════════════════════════════════════════
 (function () {
   const canvas = document.getElementById('overlay');
@@ -10,12 +11,20 @@
   let startTime = performance.now();
   let connected = false;
 
-  // Connect WebSocket
+  // Default audio data (when no admin is connected)
+  let currentAudio = {
+    bass: 0, mid: 0, high: 0, volume: 0,
+    beat: false, beatPulse: 0, bpm: 120,
+    eqBands: new Array(64).fill(0)
+  };
+
+  // ── Connect WebSocket ──
   OverlaySocket.connect();
 
   OverlaySocket.on('connected', (state) => {
     connected = state;
-    document.getElementById('status-dot').classList.toggle('connected', state);
+    const dot = document.getElementById('status-dot');
+    if (dot) dot.classList.toggle('connected', state);
   });
 
   OverlaySocket.on('effects-state', (data) => { effects = data; });
@@ -25,70 +34,32 @@
     else effects.push(data);
   });
 
-  // Audio commands from admin panel
-  OverlaySocket.on('audio-command', (data) => {
-    if (data.source === 'mic') AudioAnalyzer.connectMic();
-    else if (data.source === 'desktop') AudioAnalyzer.connectDesktop();
-    if (data.sensitivity !== undefined) AudioAnalyzer.setSensitivity(data.sensitivity);
+  // ── Receive audio data from admin (via server) ──
+  OverlaySocket.on('audio-data', (data) => {
+    currentAudio = data;
+    // Ensure eqBands exists
+    if (!currentAudio.eqBands) currentAudio.eqBands = new Array(64).fill(0);
   });
 
-  // ── Audio Controls (on overlay page too, for direct control) ──
-  const audioSource = document.getElementById('audio-source');
-  const btnConnect = document.getElementById('btn-connect-audio');
-  const fileInput = document.getElementById('audio-file-input');
-  const beatDot = document.getElementById('beat-dot');
-  const sensSlider = document.getElementById('sensitivity');
-
-  if (btnConnect) {
-    btnConnect.addEventListener('click', () => {
-      const src = audioSource ? audioSource.value : 'none';
-      if (src === 'mic') AudioAnalyzer.connectMic();
-      else if (src === 'desktop') AudioAnalyzer.connectDesktop();
-      else if (src === 'file') fileInput.click();
-    });
-  }
-
-  if (fileInput) {
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files[0]) AudioAnalyzer.connectFile(e.target.files[0]);
-    });
-  }
-
-  if (sensSlider) {
-    sensSlider.addEventListener('input', (e) => {
-      AudioAnalyzer.setSensitivity(parseFloat(e.target.value));
-    });
-  }
-
   // ── Main Render Loop ──
-  let lastAudioSend = 0;
-
   function render() {
     const t = (performance.now() - startTime) / 1000;
-    const audio = AudioAnalyzer.getData();
 
-    // Update beat indicator
-    if (beatDot) beatDot.classList.toggle('active', audio.beat);
+    // Apply local beatPulse decay between server updates (60fps render vs 25fps audio)
+    if (!currentAudio.beat) {
+      currentAudio.beatPulse *= 0.94;
+    }
 
     // Clear canvas - fully transparent for OBS
     ctx.clearRect(0, 0, W, H);
 
     // Render all effects
-    EffectsRenderer.render(ctx, effects, audio, t);
+    EffectsRenderer.render(ctx, effects, currentAudio, t);
 
     // Render dancers (sides only!)
     const dancerEffect = effects.find(e => e.id === 'dancers');
     if (dancerEffect) {
-      DancersRenderer.render(ctx, dancerEffect, audio, t);
-    }
-
-    // Send audio data to server for admin meters
-    if (Date.now() - lastAudioSend > 40) { // 25fps for admin updates
-      lastAudioSend = Date.now();
-      OverlaySocket.emit('audio-data', {
-        bass: audio.bass, mid: audio.mid, high: audio.high,
-        volume: audio.volume, beat: audio.beat, bpm: audio.bpm
-      });
+      DancersRenderer.render(ctx, dancerEffect, currentAudio, t);
     }
 
     requestAnimationFrame(render);

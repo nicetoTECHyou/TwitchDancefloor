@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - WebSocket Client
+// TwitchDancefloor - WebSocket Client v4
 // ═══════════════════════════════════════════════════════════════
 const OverlaySocket = (() => {
   let socket = null;

@@ -1,6 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Visual Effects Renderer v3
-// VISIBLE effects! Much higher intensity defaults
+// TwitchDancefloor - Visual Effects Renderer v4
+// Uses eqBands[] from admin audio data (no more raw frequencies)
 // ═══════════════════════════════════════════════════════════════
 
 const EffectsRenderer = (() => {
@@ -125,7 +125,7 @@ const EffectsRenderer = (() => {
     ctx.restore();
   }
 
-  // ═══════════════════ FOG - MUCH MORE VISIBLE ═══════════════════
+  // ═══════════════════ FOG ═══════════════════
   function renderFog(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
@@ -136,16 +136,16 @@ const EffectsRenderer = (() => {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
-    for (let i = 0; i < 12; i++) {
-      const y = H * 0.4 + Math.sin(t * speed * 0.12 + i * 1.1) * H * 0.3;
-      const x = ((t * speed * 30 + i * 250) % (W + 800)) - 400;
-      const size = 350 + i * 60 + audio.volume * 250 * intensity + bp * 100;
-      const alpha = (0.06 + audio.volume * 0.08 + bp * 0.04) * intensity;
+    for (let i = 0; i < 16; i++) {
+      const y = H * 0.35 + Math.sin(t * speed * 0.12 + i * 1.1) * H * 0.35;
+      const x = ((t * speed * 30 + i * 220) % (W + 800)) - 400;
+      const size = 400 + i * 70 + audio.volume * 300 * intensity + bp * 150;
+      const alpha = (0.08 + audio.volume * 0.12 + bp * 0.06) * intensity;
 
       const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
-      grad.addColorStop(0, rgba(color, alpha * 2));
-      grad.addColorStop(0.3, rgba(color, alpha));
-      grad.addColorStop(0.7, rgba(color, alpha * 0.3));
+      grad.addColorStop(0, rgba(color, alpha * 2.5));
+      grad.addColorStop(0.25, rgba(color, alpha * 1.5));
+      grad.addColorStop(0.6, rgba(color, alpha * 0.6));
       grad.addColorStop(1, rgba(color, 0));
 
       ctx.beginPath();
@@ -273,8 +273,7 @@ const EffectsRenderer = (() => {
     ctx.restore();
   }
 
-  // ═══════════════════ EQUALIZER - BIG & VISIBLE ═══════════════════
-  const eqSmooth = new Float32Array(64);
+  // ═══════════════════ EQUALIZER - Uses eqBands from admin ═══════════════════
   function renderEqualizer(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
@@ -286,16 +285,16 @@ const EffectsRenderer = (() => {
     const maxH = 300 * intensity;
     const bp = audio.beatPulse || 0;
 
-    if (!audio.frequencies || audio.frequencies.length === 0) return;
+    // Use eqBands from audio data (sent from admin)
+    const bands = audio.eqBands;
+    if (!bands || bands.length === 0) return;
 
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
     for (let i = 0; i < barCount; i++) {
-      const freqIdx = Math.floor((i / barCount) * (audio.frequencies.length * 0.4));
-      const raw = (audio.frequencies[freqIdx] || 0) / 255;
-      eqSmooth[i] += (raw - eqSmooth[i]) * 0.35;
-      const barH = Math.max(eqSmooth[i] * maxH + 6 + bp * 20, 6);
+      const raw = bands[i] || 0;
+      const barH = Math.max(raw * maxH + 6 + bp * 20, 6);
       const x = i * totalBarW + gap / 2;
       const y = H - barH;
 
@@ -344,7 +343,7 @@ const EffectsRenderer = (() => {
     ctx.restore();
   }
 
-  // ═══════════════════ MIRROR BALL - MUCH MORE VISIBLE ═══════════════════
+  // ═══════════════════ MIRROR BALL ═══════════════════
   function renderMirrorball(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
@@ -356,52 +355,61 @@ const EffectsRenderer = (() => {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
-    // Ball itself - bigger and more visible
-    const ballGrad = ctx.createRadialGradient(cx, cy, 3, cx, cy, 35);
-    ballGrad.addColorStop(0, rgba('#ffffff', 0.6 * intensity));
-    ballGrad.addColorStop(0.5, rgba('#cccccc', 0.3 * intensity));
-    ballGrad.addColorStop(1, rgba('#666666', 0.1 * intensity));
+    // Ball itself
+    const ballGrad = ctx.createRadialGradient(cx, cy, 3, cx, cy, 45);
+    ballGrad.addColorStop(0, rgba('#ffffff', 0.7 * intensity));
+    ballGrad.addColorStop(0.4, rgba('#dddddd', 0.4 * intensity));
+    ballGrad.addColorStop(0.7, rgba('#999999', 0.2 * intensity));
+    ballGrad.addColorStop(1, rgba('#444444', 0.05 * intensity));
     ctx.beginPath();
-    ctx.arc(cx, cy, 30, 0, Math.PI * 2);
+    ctx.arc(cx, cy, 40, 0, Math.PI * 2);
     ctx.fillStyle = ballGrad;
     ctx.shadowColor = '#ffffff';
-    ctx.shadowBlur = 15 + bp * 20;
+    ctx.shadowBlur = 20 + bp * 30;
     ctx.fill();
 
+    // Hanging wire
+    ctx.beginPath();
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, cy - 40);
+    ctx.strokeStyle = rgba('#888888', 0.5 * intensity);
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 0;
+    ctx.stroke();
+
     // Light dots - MANY more, bigger, brighter
-    const dotCount = 50;
     const rotSpeed = t * speed * 0.6;
 
-    for (let ring = 0; ring < 5; ring++) {
-      const dotsInRing = 8 + ring * 4;
+    for (let ring = 0; ring < 6; ring++) {
+      const dotsInRing = 8 + ring * 5;
       for (let i = 0; i < dotsInRing; i++) {
         const angle = (i / dotsInRing) * Math.PI * 2 + rotSpeed * (1 + ring * 0.15);
-        const dist = 150 + ring * 180 + (audio.bass + bp * 0.3) * 200 * intensity;
+        const dist = 180 + ring * 200 + (audio.bass + bp * 0.3) * 250 * intensity;
         const dx = Math.cos(angle) * dist;
-        const dy = Math.abs(Math.sin(angle)) * dist * 0.65 + 80 + ring * 30;
+        const dy = Math.abs(Math.sin(angle)) * dist * 0.65 + 80 + ring * 35;
         const dotX = cx + dx;
         const dotY = cy + dy;
 
         if (dotY > H + 50 || dotX < -100 || dotX > W + 100) continue;
 
-        const dotSize = 4 + audio.volume * 8 * intensity + bp * 4;
-        const alpha = (0.35 + audio.volume * 0.4 + bp * 0.25) * intensity;
+        const dotSize = 5 + audio.volume * 10 * intensity + bp * 5;
+        const alpha = (0.4 + audio.volume * 0.5 + bp * 0.3) * intensity;
 
         ctx.beginPath();
         ctx.arc(dotX, dotY, dotSize, 0, Math.PI * 2);
         ctx.fillStyle = rgba(color, alpha);
         ctx.shadowColor = color;
-        ctx.shadowBlur = 20 + bp * 15;
+        ctx.shadowBlur = 25 + bp * 20;
         ctx.fill();
 
         // Dot trail
         const trailAngle = angle - rotSpeed * 0.1;
         const trailDx = Math.cos(trailAngle) * dist;
-        const trailDy = Math.abs(Math.sin(trailAngle)) * dist * 0.65 + 80 + ring * 30;
+        const trailDy = Math.abs(Math.sin(trailAngle)) * dist * 0.65 + 80 + ring * 35;
         ctx.beginPath();
-        ctx.arc(cx + trailDx, cy + trailDy, dotSize * 0.6, 0, Math.PI * 2);
-        ctx.fillStyle = rgba(color, alpha * 0.3);
-        ctx.shadowBlur = 10;
+        ctx.arc(cx + trailDx, cy + trailDy, dotSize * 0.5, 0, Math.PI * 2);
+        ctx.fillStyle = rgba(color, alpha * 0.25);
+        ctx.shadowBlur = 12;
         ctx.fill();
       }
     }
@@ -477,7 +485,7 @@ const EffectsRenderer = (() => {
     ctx.restore();
   }
 
-  // ═══════════════════ LIGHTNING - MORE DRAMATIC ═══════════════════
+  // ═══════════════════ LIGHTNING ═══════════════════
   let lightningBolts = [];
   function renderLightning(ctx, effect, audio, t) {
     if (!effect.enabled) return;
@@ -485,9 +493,9 @@ const EffectsRenderer = (() => {
     const color = effect.color;
 
     // Trigger on beat or with bass
-    if (audio.beat || (audio.bass > 0.45 && Math.random() < 0.04)) {
+    if (audio.beat || (audio.bass > 0.4 && Math.random() < 0.06)) {
       const startX = W * (0.1 + Math.random() * 0.8);
-      const bolt = { points: [{ x: startX, y: 0 }], alpha: 1.0, life: 6 };
+      const bolt = { points: [{ x: startX, y: 0 }], alpha: 1.0, life: 8 };
       let bx = startX, by = 0;
       while (by < H) {
         bx += (Math.random() - 0.5) * 140;
@@ -502,7 +510,7 @@ const EffectsRenderer = (() => {
             bby += 15 + Math.random() * 35;
             bolt.points.push({ x: bbx, y: Math.min(bby, H), branch: true });
           }
-          bolt.points.push({ x: bx, y: Math.min(by, H), branch: false }); // return to main
+          bolt.points.push({ x: bx, y: Math.min(by, H), branch: false });
         }
       }
       lightningBolts.push(bolt);
@@ -513,7 +521,7 @@ const EffectsRenderer = (() => {
     for (let i = lightningBolts.length - 1; i >= 0; i--) {
       const bolt = lightningBolts[i];
       bolt.life--;
-      bolt.alpha *= 0.6;
+      bolt.alpha *= 0.65;
       if (bolt.life <= 0) { lightningBolts.splice(i, 1); continue; }
 
       // Wide glow
@@ -524,10 +532,10 @@ const EffectsRenderer = (() => {
         else if (!started) { ctx.moveTo(pt.x, pt.y); started = true; }
         else ctx.lineTo(pt.x, pt.y);
       }
-      ctx.strokeStyle = rgba(color, bolt.alpha * 0.4 * intensity);
-      ctx.lineWidth = 14;
+      ctx.strokeStyle = rgba(color, bolt.alpha * 0.5 * intensity);
+      ctx.lineWidth = 18;
       ctx.shadowColor = color;
-      ctx.shadowBlur = 50;
+      ctx.shadowBlur = 60;
       ctx.stroke();
 
       // Core
@@ -540,13 +548,13 @@ const EffectsRenderer = (() => {
       }
       ctx.strokeStyle = rgba('#ffffff', bolt.alpha * intensity);
       ctx.lineWidth = 3;
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur = 25;
       ctx.stroke();
     }
     ctx.restore();
   }
 
-  // ═══════════════════ SMOKE - THICKER & VISIBLE ═══════════════════
+  // ═══════════════════ SMOKE ═══════════════════
   function renderSmoke(ctx, effect, audio, t) {
     if (!effect.enabled) return;
     const intensity = effect.intensity;
@@ -557,17 +565,17 @@ const EffectsRenderer = (() => {
     ctx.save();
     ctx.globalCompositeOperation = 'screen';
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 14; i++) {
       const phase = i * 1.6;
       const x = ((Math.sin(t * speed * 0.07 + phase) + 1) / 2) * W;
-      const y = H - 50 - Math.sin(t * speed * 0.1 + phase) * 250 - i * 30;
-      const size = 280 + i * 70 + audio.volume * 200 * intensity + bp * 80;
-      const alpha = (0.06 + audio.bass * 0.05 + bp * 0.03) * intensity;
+      const y = H - 50 - Math.sin(t * speed * 0.1 + phase) * 300 - i * 35;
+      const size = 320 + i * 80 + audio.volume * 250 * intensity + bp * 100;
+      const alpha = (0.08 + audio.bass * 0.07 + bp * 0.04) * intensity;
 
       const grad = ctx.createRadialGradient(x, y, 0, x, y, size);
-      grad.addColorStop(0, rgba(color, alpha * 2));
-      grad.addColorStop(0.3, rgba(color, alpha * 1.2));
-      grad.addColorStop(0.6, rgba(color, alpha * 0.5));
+      grad.addColorStop(0, rgba(color, alpha * 2.5));
+      grad.addColorStop(0.25, rgba(color, alpha * 1.5));
+      grad.addColorStop(0.6, rgba(color, alpha * 0.6));
       grad.addColorStop(1, rgba(color, 0));
 
       ctx.beginPath();
