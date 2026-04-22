@@ -1,7 +1,7 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Overlay Main Loop v4
+// TwitchDancefloor - Overlay Main Loop v6
 // TRANSPARENT background, receives audio data from admin via server
-// NO local audio capture - all audio is handled by admin panel
+// FRAME RATE LIMITED to 30fps - prevents GPU overload in OBS
 // ═══════════════════════════════════════════════════════════════
 (function () {
   const canvas = document.getElementById('overlay');
@@ -10,6 +10,11 @@
   let effects = [];
   let startTime = performance.now();
   let connected = false;
+
+  // Frame rate limiter - 30fps max (saves GPU, OBS doesn't need more)
+  const TARGET_FPS = 30;
+  const FRAME_INTERVAL = 1000 / TARGET_FPS;
+  let lastFrameTime = 0;
 
   // Default audio data (when no admin is connected)
   let currentAudio = {
@@ -37,17 +42,23 @@
   // ── Receive audio data from admin (via server) ──
   OverlaySocket.on('audio-data', (data) => {
     currentAudio = data;
-    // Ensure eqBands exists
     if (!currentAudio.eqBands) currentAudio.eqBands = new Array(64).fill(0);
   });
 
-  // ── Main Render Loop ──
-  function render() {
+  // ── Main Render Loop with FPS cap ──
+  function render(timestamp) {
+    requestAnimationFrame(render);
+
+    // Throttle to target FPS
+    const elapsed = timestamp - lastFrameTime;
+    if (elapsed < FRAME_INTERVAL) return;
+    lastFrameTime = timestamp - (elapsed % FRAME_INTERVAL);
+
     const t = (performance.now() - startTime) / 1000;
 
-    // Apply local beatPulse decay between server updates (60fps render vs 25fps audio)
+    // Apply local beatPulse decay between server updates
     if (!currentAudio.beat) {
-      currentAudio.beatPulse *= 0.88;  // Faster decay = snappier beats, less lingering
+      currentAudio.beatPulse *= 0.88;
     }
 
     // Clear canvas - fully transparent for OBS
@@ -61,9 +72,7 @@
     if (dancerEffect) {
       DancersRenderer.render(ctx, dancerEffect, currentAudio, t);
     }
-
-    requestAnimationFrame(render);
   }
 
-  render();
+  requestAnimationFrame(render);
 })();
