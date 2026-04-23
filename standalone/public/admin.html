@@ -13,7 +13,7 @@
   <header class="header">
     <div class="header-left">
       <h1 class="neon-title">TwitchDancefloor</h1>
-      <span class="version">v0.0.8</span>
+      <span class="version">v0.0.9</span>
     </div>
     <div class="header-right">
       <div class="connection-status" id="ws-status">
@@ -182,35 +182,15 @@
         </div>
       </div>
 
-      <!-- Scenes Panel -->
+      <!-- Scenes Panel - NOW DYNAMIC -->
       <div class="panel" id="panel-scenes">
-        <h2>Schnell-Szenen</h2>
-        <div class="scene-grid">
-          <button class="scene-btn club" data-scene="club">
-            <span class="scene-icon">&#x1F3B5;</span>
-            <span class="scene-name">Club Mode</span>
-            <span class="scene-desc">Laser + Spotlights + Spiegelkugel + Nebel + EQ</span>
-          </button>
-          <button class="scene-btn rave" data-scene="rave">
-            <span class="scene-icon">&#x26A1;</span>
-            <span class="scene-name">Rave Mode</span>
-            <span class="scene-desc">Strobe + Laser + Partikel + Farbflut + Konfetti + Blitze</span>
-          </button>
-          <button class="scene-btn chill" data-scene="chill">
-            <span class="scene-icon">&#x1F30A;</span>
-            <span class="scene-name">Chill Mode</span>
-            <span class="scene-desc">Farbflut + Nebel + Lichtkegel + Rauch</span>
-          </button>
-          <button class="scene-btn party" data-scene="party">
-            <span class="scene-icon">&#x1F389;</span>
-            <span class="scene-name">Party Mode</span>
-            <span class="scene-desc">Alles aktiv - moderate Intensit&auml;t</span>
-          </button>
-          <button class="scene-btn blackout" data-scene="blackout">
-            <span class="scene-icon">&#x2B1B;</span>
-            <span class="scene-name">Blackout</span>
-            <span class="scene-desc">Alle Effekte aus</span>
-          </button>
+        <div class="scene-panel-header">
+          <h2>Schnell-Szenen</h2>
+          <button class="btn-add-scene" id="btn-add-scene">+ Neue Scene</button>
+        </div>
+        <p class="scene-hint">Klicke auf eine Scene um sie zu aktivieren. Bearbeite, f&uuml;ge hinzu oder l&ouml;sche Szenen nach Bedarf. Szenen k&ouml;nnen per Twitch Chat-Command aktiviert werden (z.B. <code>!club</code> oder <code>!scene Club Mode</code>).</p>
+        <div class="scene-grid" id="scene-grid">
+          <!-- Dynamically rendered -->
         </div>
       </div>
 
@@ -263,6 +243,54 @@
           <p class="empty-msg">Verbinde einen Kanal um Chat-Nachrichten zu sehen</p>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- SCENE EDITOR MODAL -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="scene-modal-overlay">
+  <div class="modal scene-modal">
+    <div class="modal-header">
+      <h2 id="scene-modal-title">Neue Scene erstellen</h2>
+      <button class="modal-close" id="scene-modal-close">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Scene Info -->
+      <div class="scene-editor-info">
+        <div class="editor-field">
+          <label for="scene-edit-name">Scene-Name</label>
+          <input type="text" id="scene-edit-name" placeholder="z.B. Club Mode" maxlength="40">
+        </div>
+        <div class="editor-field-row">
+          <div class="editor-field">
+            <label for="scene-edit-icon">Icon (Emoji)</label>
+            <input type="text" id="scene-edit-icon" placeholder="🎵" maxlength="4" class="icon-input">
+          </div>
+          <div class="editor-field">
+            <label for="scene-edit-command">Chat-Command</label>
+            <input type="text" id="scene-edit-command" placeholder="!club" maxlength="30" class="command-input">
+          </div>
+        </div>
+        <div class="editor-field">
+          <label for="scene-edit-desc">Beschreibung</label>
+          <input type="text" id="scene-edit-desc" placeholder="Kurze Beschreibung der Scene" maxlength="100">
+        </div>
+      </div>
+
+      <!-- Effect Selection -->
+      <div class="scene-editor-effects">
+        <h3>Effekte in dieser Scene</h3>
+        <p class="editor-hint">Aktiviere die gew&uuml;nschten Effekte und stelle die Intensit&auml;t ein. Nicht aktivierte Effekte werden beim Laden der Scene ausgeschaltet.</p>
+        <div class="scene-effect-grid" id="scene-effect-grid">
+          <!-- Dynamically rendered effect rows -->
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" id="scene-modal-cancel">Abbrechen</button>
+      <button class="btn-save-scene" id="scene-modal-save">Scene speichern</button>
     </div>
   </div>
 </div>

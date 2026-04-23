@@ -1,7 +1,8 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor v0.0.8 - Standalone Server
+// TwitchDancefloor v0.0.9 - Standalone Server
 // OBS Music Reactive Light Show Overlay
 // Audio data flows: Admin -> Server -> Overlay
+// Scenes: Full CRUD + Chat Commands
 // ═══════════════════════════════════════════════════════════════
 
 const http = require('http');
@@ -12,6 +13,7 @@ const WebSocket = require('ws');
 
 const PORT = 3131;
 const PUBLIC_DIR = path.join(__dirname, 'public');
+const SCENES_FILE = path.join(__dirname, '..', 'data', 'scenes.json');
 
 // ═══════════════════════ DEFAULT EFFECTS ═══════════════════════
 const defaultEffects = [
@@ -31,13 +33,107 @@ const defaultEffects = [
   { id: 'smoke', name: 'Rauch', category: 'atmosphere', enabled: false, intensity: 0.4, speed: 0.3, color: '#666666' },
 ];
 
+// ═══════════════════════ DEFAULT SCENES ═══════════════════════
+const defaultScenes = [
+  {
+    id: 'scene_club',
+    name: 'Club Mode',
+    icon: '\u{1F3B5}',
+    description: 'Laser + Spotlights + Spiegelkugel + Nebel + EQ',
+    command: '!club',
+    effects: [
+      { id: 'laser', enabled: true, intensity: 0.7 },
+      { id: 'spotlight', enabled: true, intensity: 0.6 },
+      { id: 'mirrorball', enabled: true, intensity: 0.6 },
+      { id: 'fog', enabled: true, intensity: 0.5 },
+      { id: 'equalizer', enabled: true, intensity: 0.7 },
+      { id: 'colorwash', enabled: true, intensity: 0.3 },
+      { id: 'dancers', enabled: true, intensity: 0.6 },
+    ]
+  },
+  {
+    id: 'scene_rave',
+    name: 'Rave Mode',
+    icon: '\u26A1',
+    description: 'Strobe + Laser + Partikel + Farbflut + Konfetti + Blitze',
+    command: '!rave',
+    effects: [
+      { id: 'strobe', enabled: true, intensity: 0.6 },
+      { id: 'laser', enabled: true, intensity: 0.8 },
+      { id: 'particles', enabled: true, intensity: 0.6 },
+      { id: 'colorwash', enabled: true, intensity: 0.5 },
+      { id: 'confetti', enabled: true, intensity: 0.5 },
+      { id: 'lightning', enabled: true, intensity: 0.6 },
+      { id: 'dancers', enabled: true, intensity: 0.6 },
+    ]
+  },
+  {
+    id: 'scene_chill',
+    name: 'Chill Mode',
+    icon: '\u{1F30A}',
+    description: 'Farbflut + Nebel + Lichtkegel + Rauch',
+    command: '!chill',
+    effects: [
+      { id: 'colorwash', enabled: true, intensity: 0.3 },
+      { id: 'fog', enabled: true, intensity: 0.4 },
+      { id: 'lightbeam', enabled: true, intensity: 0.4 },
+      { id: 'smoke', enabled: true, intensity: 0.4 },
+      { id: 'mirrorball', enabled: true, intensity: 0.3 },
+    ]
+  },
+  {
+    id: 'scene_party',
+    name: 'Party Mode',
+    icon: '\u{1F389}',
+    description: 'Alles aktiv - moderate Intensit\u00e4t',
+    command: '!party',
+    effects: defaultEffects.map(e => ({ id: e.id, enabled: true, intensity: 0.5 }))
+  },
+  {
+    id: 'scene_blackout',
+    name: 'Blackout',
+    icon: '\u2B1B',
+    description: 'Alle Effekte aus',
+    command: '!blackout',
+    effects: defaultEffects.map(e => ({ id: e.id, enabled: false }))
+  },
+];
+
 // ═══════════════════════ STATE ═══════════════════════
 let effects = JSON.parse(JSON.stringify(defaultEffects));
 let commands = [];
+let scenes = loadScenes();
 let channelConfig = { channelName: '', platform: 'twitch', connected: false };
 let audioData = { bass: 0, mid: 0, high: 0, volume: 0, beat: false, beatPulse: 0, bpm: 120, eqBands: [] };
 const commandCooldowns = new Map();
+const sceneCooldowns = new Map();
 let twitchWs = null;
+
+// ═══════════════════════ SCENE PERSISTENCE ═══════════════════════
+function loadScenes() {
+  try {
+    if (fs.existsSync(SCENES_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SCENES_FILE, 'utf8'));
+      if (Array.isArray(data) && data.length > 0) {
+        console.log('[Scenes] Loaded', data.length, 'scenes from file');
+        return data;
+      }
+    }
+  } catch (e) {
+    console.error('[Scenes] Load error:', e.message);
+  }
+  return JSON.parse(JSON.stringify(defaultScenes));
+}
+
+function saveScenes() {
+  try {
+    const dir = path.dirname(SCENES_FILE);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(SCENES_FILE, JSON.stringify(scenes, null, 2), 'utf8');
+  } catch (e) {
+    console.error('[Scenes] Save error:', e.message);
+  }
+}
 
 // ═══════════════════════ STATIC FILE SERVER ═══════════════════════
 const MIME_TYPES = {
@@ -118,10 +214,41 @@ function disconnectTwitch() {
   io.emit('channel-status', channelConfig);
 }
 
+// ═══════════════════════ CHAT COMMAND PROCESSING ═══════════════════════
 function processChatCommand(username, content) {
   const now = Date.now();
+  const contentLower = content.toLowerCase().trim();
+
+  // ── Scene Commands ──
+  // Check !scene <name> or direct scene commands like !club, !rave
+  let sceneMatch = null;
+
+  // Format: !scene <name>
+  if (contentLower.startsWith('!scene ')) {
+    const sceneName = contentLower.slice(7).trim();
+    sceneMatch = scenes.find(s => s.name.toLowerCase() === sceneName || s.id.toLowerCase() === sceneName);
+  }
+
+  // Format: direct command like !club, !rave
+  if (!sceneMatch) {
+    sceneMatch = scenes.find(s => s.command && s.command.toLowerCase() === contentLower);
+  }
+
+  if (sceneMatch) {
+    const lastUsed = sceneCooldowns.get(sceneMatch.id) || 0;
+    if (now - lastUsed < 5000) return; // 5s cooldown for scene commands
+    sceneCooldowns.set(sceneMatch.id, now);
+
+    applyScene(sceneMatch);
+    io.emit('scene-applied', { sceneId: sceneMatch.id, sceneName: sceneMatch.name, username });
+    io.emit('chat-trigger', { username, command: contentLower, effectId: '__scene__', action: 'scene', effectName: 'Scene: ' + sceneMatch.name });
+    console.log(`[CMD] ${username}: ${contentLower} -> Scene: ${sceneMatch.name}`);
+    return;
+  }
+
+  // ── Effect Commands (existing logic) ──
   for (const cmd of commands) {
-    if (content.toLowerCase() === cmd.command.toLowerCase()) {
+    if (contentLower === cmd.command.toLowerCase()) {
       const lastUsed = commandCooldowns.get(cmd.command) || 0;
       if (now - lastUsed < cmd.cooldown * 1000) continue;
       commandCooldowns.set(cmd.command, now);
@@ -140,6 +267,28 @@ function processChatCommand(username, content) {
   }
 }
 
+// ═══════════════════════ APPLY SCENE ═══════════════════════
+function applyScene(scene) {
+  if (!scene || !scene.effects) return;
+
+  // First turn all effects off
+  for (const eff of effects) {
+    eff.enabled = false;
+  }
+
+  // Then apply scene settings
+  for (const upd of scene.effects) {
+    const eff = effects.find(e => e.id === upd.id);
+    if (eff) {
+      eff.enabled = upd.enabled;
+      if (upd.intensity !== undefined) eff.intensity = upd.intensity;
+    }
+  }
+
+  io.emit('effects-state', effects);
+  console.log('[Scene] Applied:', scene.name);
+}
+
 // ═══════════════════════ HTTP SERVER ═══════════════════════
 const httpServer = http.createServer(serveStatic);
 
@@ -153,6 +302,7 @@ io.on('connection', (socket) => {
   console.log('[WS] Client connected:', socket.id);
   socket.emit('effects-state', effects);
   socket.emit('commands-state', commands);
+  socket.emit('scenes-state', scenes);
   socket.emit('channel-status', channelConfig);
   socket.emit('audio-data', audioData);
 
@@ -173,6 +323,51 @@ io.on('connection', (socket) => {
   socket.on('update-command', (data) => {
     const idx = commands.findIndex(c => c.id === data.id);
     if (idx !== -1) { commands[idx] = { ...commands[idx], ...data }; io.emit('commands-state', commands); }
+  });
+
+  // Scenes - Full CRUD
+  socket.on('add-scene', (scene) => {
+    // Ensure unique ID
+    if (!scene.id) scene.id = 'scene_' + Date.now();
+    // Check for duplicate ID
+    if (scenes.find(s => s.id === scene.id)) {
+      scene.id = 'scene_' + Date.now();
+    }
+    scenes.push(scene);
+    saveScenes();
+    io.emit('scenes-state', scenes);
+    console.log('[Scene] Added:', scene.name);
+  });
+
+  socket.on('update-scene', (data) => {
+    const idx = scenes.findIndex(s => s.id === data.id);
+    if (idx !== -1) {
+      scenes[idx] = { ...scenes[idx], ...data };
+      saveScenes();
+      io.emit('scenes-state', scenes);
+      console.log('[Scene] Updated:', data.name || data.id);
+    }
+  });
+
+  socket.on('delete-scene', (sceneId) => {
+    scenes = scenes.filter(s => s.id !== sceneId);
+    saveScenes();
+    io.emit('scenes-state', scenes);
+    console.log('[Scene] Deleted:', sceneId);
+  });
+
+  socket.on('apply-scene', (sceneId) => {
+    const scene = scenes.find(s => s.id === sceneId);
+    if (scene) applyScene(scene);
+  });
+
+  // Legacy support: apply-scene with effects array
+  socket.on('apply-scene-effects', (sceneEffects) => {
+    for (const upd of sceneEffects) {
+      const eff = effects.find(e => e.id === upd.id);
+      if (eff) { eff.enabled = upd.enabled; eff.intensity = upd.intensity ?? eff.intensity; }
+    }
+    io.emit('effects-state', effects);
   });
 
   // Channel
@@ -196,26 +391,18 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Scene presets
-  socket.on('apply-scene', (sceneEffects) => {
-    for (const upd of sceneEffects) {
-      const eff = effects.find(e => e.id === upd.id);
-      if (eff) { eff.enabled = upd.enabled; eff.intensity = upd.intensity ?? eff.intensity; }
-    }
-    io.emit('effects-state', effects);
-  });
-
   socket.on('disconnect', () => console.log('[WS] Client disconnected:', socket.id));
 });
 
 // ═══════════════════════ START ═══════════════════════
 httpServer.listen(PORT, () => {
   console.log('');
-  console.log('  TwitchDancefloor v0.0.8 - Music Reactive Light Show Overlay');
+  console.log('  TwitchDancefloor v0.0.9 - Music Reactive Light Show Overlay');
   console.log('');
   console.log('  Overlay:  http://localhost:' + PORT + '/overlay.html');
   console.log('  Admin:    http://localhost:' + PORT + '/admin.html');
   console.log('');
+  console.log('  Scenes:   ' + scenes.length + ' scenes loaded');
   console.log('  TIP: Open admin.html first, select an audio source,');
   console.log('       then add overlay.html as OBS Browser Source.');
   console.log('');

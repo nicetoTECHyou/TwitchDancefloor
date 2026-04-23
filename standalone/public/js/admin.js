@@ -1,16 +1,21 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - Admin Panel Logic v7
+// TwitchDancefloor - Admin Panel Logic v9
 // FIXED: getData() is now a pure read (no side effects)
 // AudioAnalyzer runs its own analysis loop at 30fps internally
 // Admin just reads cached data for broadcast + local meters
+// NEW: Full Scene CRUD (Create, Read, Update, Delete)
 // ═══════════════════════════════════════════════════════════════
 (function () {
   let effects = [];
   let commands = [];
+  let scenes = [];
   let channelConfig = { channelName: '', connected: false };
   let chatMessages = [];
   let audioConnected = false;
   let audioSendInterval = null;
+
+  // Scene editor state
+  let editingSceneId = null; // null = new scene, string = editing existing
 
   // ── Connect WebSocket ──
   OverlaySocket.connect();
@@ -31,6 +36,17 @@
   });
 
   OverlaySocket.on('commands-state', (data) => { commands = data; renderCommands(); populateEffectDropdown(); });
+
+  OverlaySocket.on('scenes-state', (data) => { scenes = data; renderScenes(); });
+
+  OverlaySocket.on('scene-applied', (data) => {
+    // Show feedback in chat log
+    chatMessages.push({ username: 'System', content: `${data.username} aktivierte Scene: ${data.sceneName}`, timestamp: Date.now(), isSystem: true });
+    if (chatMessages.length > 100) chatMessages.shift();
+    renderChatLog();
+    // Highlight the applied scene briefly
+    highlightScene(data.sceneId);
+  });
 
   OverlaySocket.on('channel-status', (data) => {
     channelConfig = data;
@@ -157,17 +173,14 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // AUDIO BROADCAST - Send cached data to overlay via server
-  // AudioAnalyzer.getData() is now a PURE READ (no side effects!)
-  // Analysis runs internally at 30fps - we just read the cache
+  // AUDIO BROADCAST
   // ═══════════════════════════════════════════════════════════
 
   function startAudioBroadcast() {
     if (audioSendInterval) clearInterval(audioSendInterval);
-    // Read cached data at 25fps and send to overlay
     audioSendInterval = setInterval(() => {
       if (!AudioAnalyzer.isConnected()) return;
-      const data = AudioAnalyzer.getData(); // Pure read - no side effects!
+      const data = AudioAnalyzer.getData();
       OverlaySocket.emit('audio-data', data);
     }, 40);
   }
@@ -187,7 +200,6 @@
 
   // ═══════════════════════════════════════════════════════════
   // LOCAL LEVEL METERS + WAVEFORM
-  // getData() is now a pure read - safe to call at 60fps!
   // ═══════════════════════════════════════════════════════════
 
   const wfCtx = waveformCanvas ? waveformCanvas.getContext('2d') : null;
@@ -199,10 +211,8 @@
       return;
     }
 
-    // Safe to call frequently - getData() is a pure read now!
     const data = AudioAnalyzer.getData();
 
-    // ── Update level bars ──
     const bars = { bass: data.bass, mid: data.mid, high: data.high, vol: data.volume };
     for (const [key, val] of Object.entries(bars)) {
       const fill = document.getElementById('level-' + key);
@@ -211,7 +221,6 @@
       if (valEl) valEl.textContent = Math.round(val * 100) + '%';
     }
 
-    // ── Header meters ──
     const meters = { 'meter-bass': data.bass, 'meter-mid': data.mid, 'meter-high': data.high, 'meter-vol': data.volume };
     for (const [id, val] of Object.entries(meters)) {
       const bar = document.getElementById(id);
@@ -222,11 +231,9 @@
       }
     }
 
-    // ── Beat indicator ──
     const beatDot = document.getElementById('admin-beat-dot');
     if (beatDot) beatDot.classList.toggle('active', data.beat);
 
-    // ── BPM ──
     const bpm = data.bpm || 0;
     const bpmEl = document.getElementById('admin-bpm');
     const headerBpm = document.getElementById('bpm-display');
@@ -234,7 +241,6 @@
     if (bpmEl) bpmEl.textContent = bpmText;
     if (headerBpm) headerBpm.textContent = bpmText;
 
-    // ── Waveform ──
     if (wfCtx) {
       wfCtx.clearRect(0, 0, WF_W, WF_H);
       const bands = data.eqBands;
@@ -348,40 +354,250 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  // SCENES
+  // SCENES - Full CRUD + Dynamic Rendering
   // ═══════════════════════════════════════════════════════════
 
-  document.querySelectorAll('.scene-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const sceneName = btn.dataset.scene;
-      if (sceneName === 'blackout') {
-        OverlaySocket.emit('apply-scene', effects.map(e => ({ id: e.id, enabled: false })));
-      } else if (sceneName === 'party') {
-        OverlaySocket.emit('apply-scene', effects.map(e => ({ id: e.id, enabled: true, intensity: 0.5 })));
-      } else {
-        const sceneEffects = {
-          club: [
-            { id: 'laser', enabled: true, intensity: 0.7 }, { id: 'spotlight', enabled: true, intensity: 0.6 },
-            { id: 'mirrorball', enabled: true, intensity: 0.6 }, { id: 'fog', enabled: true, intensity: 0.5 },
-            { id: 'equalizer', enabled: true, intensity: 0.7 }, { id: 'colorwash', enabled: true, intensity: 0.3 },
-            { id: 'dancers', enabled: true, intensity: 0.6 },
-          ],
-          rave: [
-            { id: 'strobe', enabled: true, intensity: 0.6 }, { id: 'laser', enabled: true, intensity: 0.8 },
-            { id: 'particles', enabled: true, intensity: 0.6 }, { id: 'colorwash', enabled: true, intensity: 0.5 },
-            { id: 'confetti', enabled: true, intensity: 0.5 }, { id: 'lightning', enabled: true, intensity: 0.6 },
-            { id: 'dancers', enabled: true, intensity: 0.6 },
-          ],
-          chill: [
-            { id: 'colorwash', enabled: true, intensity: 0.3 }, { id: 'fog', enabled: true, intensity: 0.4 },
-            { id: 'lightbeam', enabled: true, intensity: 0.4 }, { id: 'smoke', enabled: true, intensity: 0.4 },
-            { id: 'mirrorball', enabled: true, intensity: 0.3 },
-          ],
-        };
-        const allOff = effects.map(e => ({ id: e.id, enabled: false }));
-        OverlaySocket.emit('apply-scene', [...allOff, ...(sceneEffects[sceneName] || [])]);
-      }
+  const sceneGrid = document.getElementById('scene-grid');
+  const modalOverlay = document.getElementById('scene-modal-overlay');
+  const modalTitle = document.getElementById('scene-modal-title');
+  const modalClose = document.getElementById('scene-modal-close');
+  const modalCancel = document.getElementById('scene-modal-cancel');
+  const modalSave = document.getElementById('scene-modal-save');
+  const btnAddScene = document.getElementById('btn-add-scene');
+  const editName = document.getElementById('scene-edit-name');
+  const editIcon = document.getElementById('scene-edit-icon');
+  const editCommand = document.getElementById('scene-edit-command');
+  const editDesc = document.getElementById('scene-edit-desc');
+  const sceneEffectGrid = document.getElementById('scene-effect-grid');
+
+  // ── Render all scene cards ──
+  function renderScenes() {
+    if (!sceneGrid) return;
+    if (scenes.length === 0) {
+      sceneGrid.innerHTML = '<p class="empty-msg">Keine Szenen vorhanden. Klicke "+ Neue Scene" um eine zu erstellen.</p>';
+      return;
+    }
+
+    sceneGrid.innerHTML = scenes.map(scene => {
+      const enabledCount = scene.effects.filter(e => e.enabled).length;
+      const totalCount = scene.effects.length;
+      const cmdBadge = scene.command ? `<span class="scene-cmd-badge">${scene.command}</span>` : '';
+      return `
+        <div class="scene-card" data-scene-id="${scene.id}">
+          <div class="scene-card-top" data-apply-scene="${scene.id}">
+            <span class="scene-icon">${scene.icon || '\u{1F3AC}'}</span>
+            <span class="scene-name">${scene.name}</span>
+            <span class="scene-desc">${scene.description || ''}</span>
+            <div class="scene-meta">
+              <span class="scene-effect-count">${enabledCount}/${totalCount} Effekte</span>
+              ${cmdBadge}
+            </div>
+          </div>
+          <div class="scene-card-actions">
+            <button class="scene-action-btn scene-apply-btn" data-apply-scene="${scene.id}" title="Scene aktivieren">&#x25B6; Start</button>
+            <button class="scene-action-btn scene-edit-btn" data-edit-scene="${scene.id}" title="Scene bearbeiten">&#x270E; Edit</button>
+            <button class="scene-action-btn scene-delete-btn" data-delete-scene="${scene.id}" title="Scene l&ouml;schen">&#x2715; Del</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Bind events
+    sceneGrid.querySelectorAll('[data-apply-scene]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        // Don't apply if clicking action buttons
+        if (e.target.closest('.scene-card-actions')) return;
+        const sceneId = btn.dataset.applyScene;
+        OverlaySocket.emit('apply-scene', sceneId);
+      });
     });
+
+    sceneGrid.querySelectorAll('.scene-apply-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sceneId = btn.dataset.applyScene;
+        OverlaySocket.emit('apply-scene', sceneId);
+      });
+    });
+
+    sceneGrid.querySelectorAll('.scene-edit-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sceneId = btn.dataset.editScene;
+        openSceneEditor(sceneId);
+      });
+    });
+
+    sceneGrid.querySelectorAll('.scene-delete-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sceneId = btn.dataset.deleteScene;
+        const scene = scenes.find(s => s.id === sceneId);
+        if (confirm(`Scene "${scene?.name || sceneId}" wirklich l\u00f6schen?`)) {
+          OverlaySocket.emit('delete-scene', sceneId);
+        }
+      });
+    });
+  }
+
+  // ── Highlight a scene briefly (feedback when applied via chat) ──
+  function highlightScene(sceneId) {
+    const card = sceneGrid?.querySelector(`[data-scene-id="${sceneId}"]`);
+    if (card) {
+      card.classList.add('scene-highlight');
+      setTimeout(() => card.classList.remove('scene-highlight'), 1500);
+    }
+  }
+
+  // ── Scene Editor Modal ──
+
+  function openSceneEditor(sceneId) {
+    editingSceneId = sceneId || null;
+
+    if (editingSceneId) {
+      // Editing existing scene
+      const scene = scenes.find(s => s.id === sceneId);
+      if (!scene) return;
+      modalTitle.textContent = 'Scene bearbeiten: ' + scene.name;
+      editName.value = scene.name || '';
+      editIcon.value = scene.icon || '';
+      editCommand.value = scene.command || '';
+      editDesc.value = scene.description || '';
+      renderSceneEffectEditor(scene.effects);
+    } else {
+      // Creating new scene
+      modalTitle.textContent = 'Neue Scene erstellen';
+      editName.value = '';
+      editIcon.value = '\u{1F3AC}';
+      editCommand.value = '';
+      editDesc.value = '';
+      // Default: all effects disabled
+      renderSceneEffectEditor(effects.map(e => ({ id: e.id, enabled: false, intensity: e.intensity })));
+    }
+
+    modalOverlay.classList.add('active');
+  }
+
+  function closeSceneEditor() {
+    modalOverlay.classList.remove('active');
+    editingSceneId = null;
+  }
+
+  function renderSceneEffectEditor(sceneEffects) {
+    // Build editor rows for each effect
+    sceneEffectGrid.innerHTML = effects.map(eff => {
+      const sceneEff = sceneEffects.find(se => se.id === eff.id);
+      const enabled = sceneEff ? sceneEff.enabled : false;
+      const intensity = sceneEff ? (sceneEff.intensity ?? eff.intensity) : eff.intensity;
+      const categoryLabel = { light: '\u{1F4A1} Licht', atmosphere: '\u{1F32B}\uFE0F Atmosph\u00e4re', visual: '\u{1F3A8} Visuell' };
+
+      return `
+        <div class="scene-effect-row ${enabled ? 'active' : ''}" data-se-id="${eff.id}">
+          <div class="scene-effect-toggle">
+            <label class="toggle mini-toggle">
+              <input type="checkbox" ${enabled ? 'checked' : ''} data-se-toggle="${eff.id}">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="scene-effect-info">
+            <span class="scene-effect-name">${eff.name}</span>
+            <span class="scene-effect-cat">${categoryLabel[eff.category] || eff.category}</span>
+          </div>
+          <div class="scene-effect-intensity">
+            <input type="range" min="0" max="1" step="0.05" value="${intensity}" data-se-intensity="${eff.id}" ${!enabled ? 'disabled' : ''}>
+            <span class="scene-effect-val" data-se-val="${eff.id}">${intensity.toFixed(2)}</span>
+          </div>
+        </div>`;
+    }).join('');
+
+    // Bind toggle events
+    sceneEffectGrid.querySelectorAll('[data-se-toggle]').forEach(toggle => {
+      toggle.addEventListener('change', (e) => {
+        const id = e.target.dataset.seToggle;
+        const row = sceneEffectGrid.querySelector(`[data-se-id="${id}"]`);
+        const intensityInput = row?.querySelector(`[data-se-intensity="${id}"]`);
+        row.classList.toggle('active', e.target.checked);
+        if (intensityInput) intensityInput.disabled = !e.target.checked;
+      });
+    });
+
+    // Bind intensity slider events
+    sceneEffectGrid.querySelectorAll('[data-se-intensity]').forEach(slider => {
+      slider.addEventListener('input', (e) => {
+        const id = e.target.dataset.seIntensity;
+        const valEl = sceneEffectGrid.querySelector(`[data-se-val="${id}"]`);
+        if (valEl) valEl.textContent = parseFloat(e.target.value).toFixed(2);
+      });
+    });
+  }
+
+  function getSceneEditorData() {
+    const name = editName.value.trim();
+    if (!name) {
+      alert('Bitte gib einen Scene-Namen ein.');
+      return null;
+    }
+
+    const command = editCommand.value.trim();
+    // Validate command format if provided
+    if (command && !command.startsWith('!')) {
+      alert('Chat-Command muss mit ! beginnen (z.B. !club)');
+      return null;
+    }
+
+    // Check for duplicate command
+    if (command) {
+      const existing = scenes.find(s => s.command === command && s.id !== editingSceneId);
+      if (existing) {
+        alert(`Command "${command}" wird bereits von Scene "${existing.name}" verwendet.`);
+        return null;
+      }
+    }
+
+    // Build effects array from editor
+    const sceneEffects = effects.map(eff => {
+      const toggle = sceneEffectGrid.querySelector(`[data-se-toggle="${eff.id}"]`);
+      const intensitySlider = sceneEffectGrid.querySelector(`[data-se-intensity="${eff.id}"]`);
+      return {
+        id: eff.id,
+        enabled: toggle ? toggle.checked : false,
+        intensity: intensitySlider ? parseFloat(intensitySlider.value) : eff.intensity,
+      };
+    });
+
+    return {
+      name,
+      icon: editIcon.value.trim() || '\u{1F3AC}',
+      command: command || '',
+      description: editDesc.value.trim() || '',
+      effects: sceneEffects,
+    };
+  }
+
+  // ── Scene editor button events ──
+  btnAddScene.addEventListener('click', () => openSceneEditor(null));
+  modalClose.addEventListener('click', closeSceneEditor);
+  modalCancel.addEventListener('click', closeSceneEditor);
+
+  modalOverlay.addEventListener('click', (e) => {
+    if (e.target === modalOverlay) closeSceneEditor();
+  });
+
+  // Keyboard shortcut: Escape to close modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modalOverlay.classList.contains('active')) {
+      closeSceneEditor();
+    }
+  });
+
+  modalSave.addEventListener('click', () => {
+    const data = getSceneEditorData();
+    if (!data) return;
+
+    if (editingSceneId) {
+      // Update existing scene
+      OverlaySocket.emit('update-scene', { id: editingSceneId, ...data });
+    } else {
+      // Add new scene
+      OverlaySocket.emit('add-scene', { id: 'scene_' + Date.now(), ...data });
+    }
+    closeSceneEditor();
   });
 
   // ═══════════════════════════════════════════════════════════

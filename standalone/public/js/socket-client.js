@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════
-// TwitchDancefloor - WebSocket Client v4
+// TwitchDancefloor - WebSocket Client v5
+// Added: scenes-state, scene-applied events
 // ═══════════════════════════════════════════════════════════════
 const OverlaySocket = (() => {
   let socket = null;
@@ -34,6 +35,8 @@ const OverlaySocket = (() => {
     socket.on('effects-state', (data) => trigger('effects-state', data));
     socket.on('effect-update', (data) => trigger('effect-update', data));
     socket.on('commands-state', (data) => trigger('commands-state', data));
+    socket.on('scenes-state', (data) => trigger('scenes-state', data));
+    socket.on('scene-applied', (data) => trigger('scene-applied', data));
     socket.on('channel-status', (data) => trigger('channel-status', data));
     socket.on('audio-data', (data) => trigger('audio-data', data));
     socket.on('chat-trigger', (data) => trigger('chat-trigger', data));
